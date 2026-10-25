@@ -57,18 +57,28 @@ def price(value):
 
 
 def parse_workbook(path):
-    path = Path(path)
-    if path.stat().st_size > MAX_BYTES:
+    return _parse_bytes(_read_bytes(path))
+
+
+def _read_bytes(path):
+    # A bounded read avoids trusting a separate stat when a file changes.
+    with Path(path).open('rb') as file:
+        raw = file.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
         raise ValueError('workbook too large')
+    return raw
+
+
+def _parse_bytes(raw):
     try:
-        with ZipFile(path) as z:
+        with ZipFile(BytesIO(raw)) as z:
             if sum(i.file_size for i in z.infolist()) > MAX_UNPACKED or len(z.infolist()) > 2000:
                 raise ValueError('workbook archive limits exceeded')
     except BadZipFile:
         raise ValueError('invalid xlsx') from None
     # An in-memory stream also prevents lazy worksheet iterators from retaining
     # an OS file handle on validation failure (notably on Windows).
-    stream = BytesIO(path.read_bytes())
+    stream = BytesIO(raw)
     wb = openpyxl.load_workbook(stream, read_only=True, data_only=False, keep_links=False)
     records, errors, total, duplicates = {}, [], 0, 0
     try:
@@ -122,15 +132,9 @@ def parse_workbook(path):
 
 def import_workbook(db, actor, path, dry_run=False):
     require(db, actor, {'owner', 'admin'})
-    # Read once into a private temporary snapshot to avoid file changes between hash/parse.
-    import tempfile
-    raw = Path(path).read_bytes() if Path(path).stat().st_size <= MAX_BYTES else None
-    if raw is None or len(raw) > MAX_BYTES:
-        raise ValueError('workbook too large')
-    with tempfile.TemporaryDirectory() as tmp:
-        snapshot = Path(tmp) / 'inventory.xlsx'
-        snapshot.write_bytes(raw)
-        records, stats = parse_workbook(snapshot)
+    # One bounded in-memory snapshot for parsing and hashing; no inventory copy on disk.
+    raw = _read_bytes(path)
+    records, stats = _parse_bytes(raw)
     digest = hashlib.sha256(raw).hexdigest()
     db.execute('BEGIN IMMEDIATE')
     try:

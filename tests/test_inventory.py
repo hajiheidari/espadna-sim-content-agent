@@ -98,6 +98,20 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             set_sale_status(self.db, 2, PHONE, 'sold')
 
+    def test_revocation_and_reactivation_preserve_history(self):
+        from espadna.core import revoke_user, require
+        set_role(self.db, 1, 2, 'admin')
+        with self.assertRaises(PermissionError):
+            revoke_user(self.db, 2, 1)
+        with self.assertRaises(ValueError):
+            revoke_user(self.db, 1, 1)
+        revoke_user(self.db, 1, 2)
+        with self.assertRaises(PermissionError):
+            require(self.db, 2, {'admin'})
+        set_role(self.db, 1, 2, 'viewer')
+        self.assertEqual(require(self.db, 2, {'viewer'}), 'viewer')
+        self.assertEqual(self.db.execute("SELECT count(*) FROM audit WHERE action='user_revoked'").fetchone()[0], 1)
+
     def test_public_boundary(self):
         self.book()
         import_workbook(self.db, 1, self.path)

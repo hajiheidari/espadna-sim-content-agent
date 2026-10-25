@@ -3,7 +3,7 @@ import logging
 import os
 from pathlib import Path
 import tempfile
-from .core import connect, require, set_role, set_sale_status, caption
+from .core import connect, require, set_role, revoke_user, set_sale_status, caption
 from .importer import MAX_BYTES, import_workbook
 
 
@@ -27,6 +27,11 @@ def build_application(token, database):
                     raise ValueError('usage')
                 set_role(db, actor, int(context.args[0]), context.args[1])
                 text = 'نقش ثبت شد.'
+            elif name == '/revoke':
+                if len(context.args) != 1:
+                    raise ValueError('usage')
+                revoke_user(db, actor, int(context.args[0]))
+                text = 'دسترسی کاربر لغو شد؛ سوابق تغییرات حفظ شد.'
             elif name == '/sale':
                 if len(context.args) != 2:
                     raise ValueError('usage')
@@ -35,8 +40,28 @@ def build_application(token, database):
             elif name == '/catalog':
                 rows = db.execute("SELECT phone,sim_type,sim_status,operator,sale_status FROM inventory WHERE sale_status='available' ORDER BY phone LIMIT 10").fetchall()
                 text = '\n\n'.join(caption(row) for row in rows) or 'موجودی قابل انتشار نداریم.'
+            elif name == '/alerts':
+                from .content import invalid_exports
+                alerts = invalid_exports(db, actor)
+                text = '\n'.join(f"خروجی نامعتبر: {item['export_id']} (برنامه {item['plan_id']})" for item in alerts[:20]) or 'خروجی نامعتبر ثبت نشده است.'
+            elif name in ('/plan', '/planstatus', '/approve', '/refresh'):
+                from .content import create_plan, inspect_plan, approve_plan, refresh_plan
+                if len(context.args) != 1:
+                    raise ValueError('usage')
+                if name == '/plan':
+                    plan_id = create_plan(db, actor, context.args[0])
+                    text = f'پیش‌نویس برنامه ساخته شد. شناسه: {plan_id}'
+                elif name == '/approve':
+                    approve_plan(db, actor, int(context.args[0]))
+                    text = 'برنامه تأیید شد؛ هیچ ارسال عمومی انجام نشده است.'
+                elif name == '/refresh':
+                    count = refresh_plan(db, actor, int(context.args[0]))
+                    text = f'برنامه بازسازی شد؛ {count} مورد تغییر کرد و تأیید دوباره لازم است.'
+                else:
+                    status = inspect_plan(db, actor, int(context.args[0]))
+                    text = f"وضعیت: {status['state']}، تعداد: {status['slots']}، موارد نیازمند بازسازی: {status['stale_slots']}"
             else:
-                text = '/catalog\n/sale NUMBER available|reserved|sold\n/role USER_ID owner|admin|viewer\nورود اکسل برای مالک و ادمین: ارسال فایل xlsx در گفت‌وگوی خصوصی.'
+                text = '/catalog\n/alerts\n/sale NUMBER available|reserved|sold\n/role USER_ID owner|admin|viewer\n/revoke USER_ID\n/plan YYYY-MM\n/planstatus ID\n/approve ID\n/refresh ID\nورود اکسل برای مالک و ادمین: ارسال فایل xlsx در گفت‌وگوی خصوصی.'
             await update.effective_message.reply_text(text)
         except (ValueError, PermissionError):
             await update.effective_message.reply_text('درخواست نامعتبر است یا دسترسی ندارید.')
@@ -67,7 +92,7 @@ def build_application(token, database):
         logging.getLogger(__name__).error('Telegram operation failed (%s)', type(context.error).__name__)
 
     app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler(['start', 'help', 'role', 'sale', 'catalog'], command))
+    app.add_handler(CommandHandler(['start', 'help', 'role', 'revoke', 'sale', 'catalog', 'plan', 'planstatus', 'approve', 'refresh', 'alerts'], command))
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_error_handler(error)
     return app

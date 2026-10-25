@@ -23,14 +23,38 @@ def connect(path):
     db.row_factory = sqlite3.Row
     db.execute('PRAGMA foreign_keys=ON')
     version = db.execute('PRAGMA user_version').fetchone()[0]
-    if version not in (0, 1):
-        raise ValueError('unsupported schema version')
-    db.executescript(Path(__file__).with_name('schema.sql').read_text(encoding='utf-8'))
+    try:
+        if version not in (0, 1, 2):
+            raise ValueError('unsupported schema version')
+        if version < 2:
+            db.execute('BEGIN IMMEDIATE')
+            # Another process may have migrated while this connection waited.
+            version = db.execute('PRAGMA user_version').fetchone()[0]
+            if version == 0:
+                _run_sql(db, 'schema.sql')
+                version = 1
+            if version == 1:
+                _run_sql(db, 'migration_002.sql')
+            db.execute('COMMIT')
+    except Exception:
+        db.close()
+        raise
     return db
 
 
+def _run_sql(db, filename):
+    statement = ''
+    for line in Path(__file__).with_name(filename).read_text(encoding='utf-8').splitlines(True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            db.execute(statement)
+            statement = ''
+    if statement.strip():
+        raise ValueError('incomplete migration')
+
+
 def require(db, actor, roles):
-    row = db.execute('SELECT role FROM users WHERE telegram_id=?', (actor,)).fetchone()
+    row = db.execute('SELECT role FROM users WHERE telegram_id=? AND enabled=1', (actor,)).fetchone()
     if row is None or row['role'] not in roles:
         raise PermissionError('access denied')
     return row['role']
@@ -48,7 +72,7 @@ def bootstrap_owner(db, actor):
     try:
         if db.execute('SELECT 1 FROM users').fetchone():
             raise ValueError('owner already initialized')
-        db.execute("INSERT INTO users VALUES(?,'owner')", (actor,))
+        db.execute("INSERT INTO users(telegram_id,role) VALUES(?,'owner')", (actor,))
         audit(db, actor, 'bootstrap', str(actor), after={'role': 'owner'})
         db.execute('COMMIT')
     except Exception:
@@ -62,11 +86,29 @@ def set_role(db, actor, target, role):
     db.execute('BEGIN IMMEDIATE')
     try:
         require(db, actor, {'owner'})
-        old = db.execute('SELECT role FROM users WHERE telegram_id=?', (target,)).fetchone()
-        if old and old['role'] == 'owner' and role != 'owner' and db.execute("SELECT count(*) FROM users WHERE role='owner'").fetchone()[0] == 1:
+        old = db.execute('SELECT role,enabled FROM users WHERE telegram_id=?', (target,)).fetchone()
+        if old and old['enabled'] and old['role'] == 'owner' and role != 'owner' and db.execute("SELECT count(*) FROM users WHERE role='owner' AND enabled=1").fetchone()[0] == 1:
             raise ValueError('cannot demote last owner')
-        db.execute('INSERT INTO users VALUES(?,?) ON CONFLICT(telegram_id) DO UPDATE SET role=excluded.role', (target, role))
-        audit(db, actor, 'role', str(target), dict(old) if old else None, {'role': role})
+        db.execute('INSERT INTO users(telegram_id,role) VALUES(?,?) ON CONFLICT(telegram_id) DO UPDATE SET role=excluded.role,enabled=1', (target, role))
+        audit(db, actor, 'role', str(target), dict(old) if old else None, {'role': role, 'enabled': 1})
+        db.execute('COMMIT')
+    except Exception:
+        db.execute('ROLLBACK')
+        raise
+
+
+def revoke_user(db, actor, target):
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        require(db, actor, {'owner'})
+        old = db.execute('SELECT role,enabled FROM users WHERE telegram_id=?', (target,)).fetchone()
+        if old is None:
+            raise ValueError('unknown user')
+        if old['enabled'] and old['role'] == 'owner' and db.execute("SELECT count(*) FROM users WHERE role='owner' AND enabled=1").fetchone()[0] == 1:
+            raise ValueError('cannot revoke last active owner')
+        if old['enabled']:
+            db.execute('UPDATE users SET enabled=0 WHERE telegram_id=?', (target,))
+            audit(db, actor, 'user_revoked', str(target), dict(old), {'role': old['role'], 'enabled': 0})
         db.execute('COMMIT')
     except Exception:
         db.execute('ROLLBACK')

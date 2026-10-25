@@ -3,7 +3,7 @@
 Telegram-first inventory, content production and public SIM-number catalog for **Espadna Sim**.
 
 ## Status
-Local inventory foundation and private Telegram bot scaffold implemented. Nothing is deployed or live. See [setup and security](docs/SETUP.fa.md).
+Local inventory, private Telegram scaffold, monthly content planning, tracked exports and editable draft HTML proof sheets are implemented. Nothing is deployed or live. See [setup and security](docs/SETUP.fa.md).
 
 ## Product requirements
 - Roles: owner (user management), admin (inventory and sale operations), viewer (read public-safe content). Unknown users are denied.
@@ -20,11 +20,10 @@ Local inventory foundation and private Telegram bot scaffold implemented. Nothin
 Current implementation: Python 3.11+, SQLite, openpyxl and python-telegram-bot. Cloudflare Workers + D1 remains a future deployment option requiring an adapter/migration and review. Keep secrets in runtime environment, never in Git.
 
 ## Next milestones
-1. Inventory schema, Excel parser, bot authorization and audit log.
-2. Telegram inventory and role management.
-3. Editable story renderer and golden-reference image tests.
-4. Monthly planner, 08:00 Tehran delivery, revisions.
-5. Public channel publishing and inquiry workflow.
+1. Obtain the approved contact sheet and rebuild its 30 individual story compositions; the current HTML renderer is a visibly marked draft proof, not an approved template.
+2. Add raster rendering and reference-image verification on top of the validated public-content boundary.
+3. Build a delivery queue with retries/idempotency and last-moment inventory revalidation for 08:00 Tehran delivery. Current planning records target times only.
+4. Implement public channel publishing, updates and inquiry workflow after review and explicit launch approval.
 
 ## Security
 This repository is public. **Never commit bot tokens, private phone lists, customer data, server keys, or inventory Excel files.** Use environment secrets and test fixtures only.

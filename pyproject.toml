@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "espadna-sim-content-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["openpyxl>=3.1.5,<4", "defusedxml>=0.7.1,<1", "python-telegram-bot>=22,<23"]
+dependencies = ["openpyxl>=3.1.5,<4", "defusedxml>=0.7.1,<1", "python-telegram-bot>=22,<23", "tzdata>=2025.1"]
 
 [project.scripts]
 espadna = "espadna.cli:main"
@@ -15,4 +15,4 @@ espadna = "espadna.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-espadna = ["schema.sql"]
+espadna = ["*.sql"]
