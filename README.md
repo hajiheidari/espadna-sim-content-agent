@@ -3,11 +3,11 @@
 Telegram-first inventory, content production and public SIM-number catalog for **Espadna Sim**.
 
 ## Status
-Project initialization. No Telegram bot, automation, image rendering, or deployment is live yet.
+Local inventory foundation and private Telegram bot scaffold implemented. Nothing is deployed or live. See [setup and security](docs/SETUP.fa.md).
 
 ## Product requirements
-- Roles: owner, manager (full operations), viewer (download/read content only).
-- Authorized managers upload Excel inventories (append or explicit full sync), register sold/reserved numbers and manage users. Changes are audited.
+- Roles: owner (user management), admin (inventory and sale operations), viewer (read public-safe content). Unknown users are denied.
+- Excel import is additive only. Missing numbers never delete records. Imports never reset sale/reservation state. Role management is owner-only; changes are audited.
 - Monthly content prepared in advance when possible; six connected Instagram stories daily; scheduled delivery at **08:00 Asia/Tehran**.
 - 30 approved **cinematic dark navy/black and metallic-gold** story compositions, rotating in five six-story groups. The approved contact sheet is a *visual reference*, not an editable asset. Rebuild individual 1080×1920 templates with independent text layers and verified Persian typesetting.
 - No prices in any Instagram image, caption, or public channel post. No geography claims or city backgrounds tied to prefixes.
@@ -17,7 +17,7 @@ Project initialization. No Telegram bot, automation, image rendering, or deploym
 - No paid services or deployment without owner approval.
 
 ## Planned architecture
-Cloudflare Workers + D1, object storage if needed, and a portable rendering worker with an Ubuntu fallback. Keep secrets in deployment environment, never in Git.
+Current implementation: Python 3.11+, SQLite, openpyxl and python-telegram-bot. Cloudflare Workers + D1 remains a future deployment option requiring an adapter/migration and review. Keep secrets in runtime environment, never in Git.
 
 ## Next milestones
 1. Inventory schema, Excel parser, bot authorization and audit log.
