@@ -9,6 +9,8 @@ User-supplied PNG/JPEG/WebP packs are also supported in private versioned storag
 
 A durable private delivery queue now records 08:00 Tehran due times, exclusive worker leases, bounded retries and confirmed/uncertain outcomes. Dry-run is the default; the Telegram adapter requires explicit owner launch and local credentials. No timer, network delivery or deployment is active. See [delivery operations](docs/DELIVERY.fa.md).
 
+Windows setup includes a local masked token-entry dialog and a per-user DPAPI encrypted credential file outside Git. Saving a credential does not connect or send; `bot-check` is an explicit read-only connectivity/identity check. Other hosts can use environment secrets.
+
 ## Product requirements
 - Roles: owner (user management), admin (inventory and sale operations), viewer (read public-safe content). Unknown users are denied.
 - Excel import is additive only. Missing numbers never delete records. Imports never reset sale/reservation state. Role management is owner-only; changes are audited.

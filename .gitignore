@@ -17,3 +17,4 @@ dist/
 *.zip
 /design-packs/
 /user-packs/
+*.dpapi

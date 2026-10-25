@@ -24,6 +24,8 @@ def main():
         if name == 'plan-export':
             command.add_argument('--output', required=True, help='new private JSON file outside a Git checkout')
     commands.add_parser('bot')
+    bot_check = commands.add_parser('bot-check')
+    bot_check.add_argument('--actor', required=True, type=int)
     alerts = commands.add_parser('export-alerts')
     alerts.add_argument('--actor', required=True, type=int)
     preview = commands.add_parser('plan-preview')
@@ -163,6 +165,10 @@ def main():
                     import asyncio
                     from .delivery_runtime import run_ticks
                     print(json.dumps(asyncio.run(run_ticks(db, args.actor, args.root, args.mode, args.allow_network, args.limit, args.browser_channel))))
+            elif args.command == 'bot-check':
+                import asyncio
+                from .delivery_runtime import check_bot
+                print(json.dumps(asyncio.run(check_bot(db, args.actor))))
     except (ValueError, OSError) as exc:
         parser.exit(1, str(exc) + '\n')
     finally:

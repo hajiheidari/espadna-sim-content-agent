@@ -163,7 +163,8 @@ def build_application(token, database):
 
 
 def run(database):
-    token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    from .credentials import get_token
+    token = get_token(database)
     if not token:
         raise ValueError('TELEGRAM_BOT_TOKEN is required')
     logging.getLogger('httpx').setLevel(logging.WARNING)
