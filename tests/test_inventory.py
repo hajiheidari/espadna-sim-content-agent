@@ -134,6 +134,20 @@ class InventoryTests(unittest.TestCase):
         self.assertNotIn('operator', result)
         self.assertEqual(set(result), {'phone', 'sim_type', 'sim_status'})
 
+    def test_internal_price_is_exact_and_bounded(self):
+        from espadna.importer import price
+        self.assertEqual(price('123456789012345678901234.123456'), '123456789012345678901234.123456')
+        self.assertEqual(price('123.4500'), '123.45')
+        self.assertEqual(price('0.000000'), '0')
+        for value in ('1e999999999', '1e-999999999', 'NaN', 'Infinity'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                price(value)
+
+    def test_sales_terms_only_row_is_completely_ignored(self):
+        self.book([[PHONE, 1, 2, 0, None, None], [None, None, None, None, '=1+1', None]])
+        result = import_workbook(self.db, 1, self.path)
+        self.assertEqual((result['rows'], result['inserted']), (1, 1))
+
     def test_archive_and_row_limits_and_missing_headers(self):
         self.book()
         with patch('espadna.importer.MAX_BYTES', 1):

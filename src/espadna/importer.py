@@ -44,7 +44,14 @@ def price(value):
         p = Decimal(str(value).translate(DIGITS))
         if not p.is_finite() or p < 0:
             raise ValueError('invalid internal price')
-        return format(p.normalize(), 'f')
+        # Bound exponent expansion before formatting untrusted decimal strings.
+        # Decimal.normalize() uses the active precision and can round prices.
+        if p.adjusted() > 23 or p.as_tuple().exponent < -6:
+            raise ValueError('internal price exceeds precision limits')
+        text = format(p, 'f')
+        if '.' in text:
+            text = text.rstrip('0').rstrip('.')
+        return '0' if p == 0 else text
     except InvalidOperation:
         raise ValueError('invalid internal price') from None
 
@@ -81,7 +88,7 @@ def parse_workbook(path):
                 errors.append(f'sheet {sheet_index}: missing required headers')
                 continue
             for row_index, row in enumerate(rows, 2):
-                if not any(c.value is not None for c in row):
+                if not any(row[i].value is not None for i in columns.values()):
                     continue
                 total += 1
                 if total > MAX_ROWS:
