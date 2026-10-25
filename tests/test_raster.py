@@ -41,7 +41,7 @@ class RasterTests(unittest.TestCase):
         self.assertEqual(len(list(self.output.iterdir())), 9)
         self.assertTrue(verify_bundle(self.db, 2, export_id, self.output)['usable'])
         manifest = json.loads((self.output / 'manifest.json').read_text(encoding='utf-8'))
-        self.assertEqual(manifest['design_status'], 'requires_visual_review')
+        self.assertEqual(manifest['design_status'], 'development_accepted')
         self.assertNotIn('76543210', (self.output / 'editable.html').read_text(encoding='utf-8'))
         (self.output / 'story-01.png').write_bytes(b'changed')
         self.assertFalse(verify_bundle(self.db, 2, export_id, self.output)['usable'])

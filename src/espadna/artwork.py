@@ -8,6 +8,7 @@ from .templates import template_by_id
 
 ASSETS = Path(__file__).with_name('assets')
 DESIGN_VERSION = 'reference-2026-10-25-v1'
+DESIGN_STATUS = 'development_accepted'
 
 PATHS = {
     'diamond': 'M3 8 8 2h8l5 6-9 14L3 8Zm0 0h18M8 2l4 20 4-20',
@@ -132,10 +133,53 @@ def stylesheet(scenes):
     return fonts + backgrounds + (ASSETS / 'story.css').read_text(encoding='utf-8')
 
 
-def document(items, title='مجموعهٔ قالب‌های اسپادنا سیم', review=True):
+def document(items, title='مجموعهٔ قالب‌های اسپادنا سیم', review=True, pack=None):
+    if pack is not None:
+        return custom_document(items, pack, title, review)
     # Each item can use only its same-day peers supplied by the caller.
     scenes = [template_by_id(x.get('template_id', 1)).scene for x in items]
     cards = ''.join(story_markup(item, [x for x in items if x.get('day') == item.get('day')]) for item in items)
     header = f'<header><h1>{escape(title)}</h1><p>۳۰ ترکیب مستقل بر اساس مرجع · شماره‌ها از دادهٔ ورودی معتبر · بدون قیمت · نسخهٔ طراحی {DESIGN_VERSION}</p><p>این مجموعه برای بازبینی بصری است؛ تأیید موجودی به معنی تأیید طراحی یا مجوز انتشار نیست.</p></header>' if review else ''
     csp = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'"
     return '<!doctype html><html lang="fa"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="' + csp + '"><title>' + escape(title) + '</title><style>' + stylesheet(scenes) + '</style></head><body' + (' class="single"' if not review else '') + '>' + header + '<main>' + cards + '</main></body></html>'
+
+
+def custom_document(items, pack, title, review):
+    row, manifest, images = pack
+    templates = manifest['templates']
+    backgrounds = {}
+    selected = {}
+    cards = []
+    for item in items:
+        source = template_by_id(item['template_id'])
+        template = templates[(source.id - 1) % len(templates)]
+        selected[template['id']] = template
+        content = clean_content(item['content'])
+        name = template['image']
+        if name not in backgrounds:
+            mime = 'image/jpeg' if name.endswith(('.jpg', '.jpeg')) else 'image/webp' if name.endswith('.webp') else 'image/png'
+            backgrounds[name] = 'data:' + mime + ';base64,' + base64.b64encode(images[name]).decode('ascii')
+        values = {**content, 'title': '\n'.join(source.title), 'cta': source.cta, 'brand': 'اسپادنا سیم'}
+        phone = content['phone']
+        values['phone'] = f'{phone[:4]} {phone[4:7]} {phone[7:]}'
+        layers = []
+        for layer in template['layers']:
+            field = layer['field']
+            value = layer['text'] if field == 'text' else values.get(field)
+            if not value:
+                continue  # An unknown operator stays absent, never guessed.
+            phone_class = ' phone' if field == 'phone' else ''
+            style = ';'.join(f'{key}:{layer[key]}px' for key in ('width', 'height', 'font_size')).replace('font_size', 'font-size')
+            style += f";left:{layer['x']}px;top:{layer['y']}px;color:{layer['color']};text-align:{layer['align']}"
+            text = escape(value).replace('\n', '<br>')
+            layers.append(f'<div class="pack-layer{phone_class}" data-field="{field}" style="{style}">{text}</div>')
+        cls = 'pack-bg-' + str(template['id'])
+        cards.append(f'<section class="tile"><article class="story layout-custom {cls}" data-design-kind="custom" data-template="{source.id}" data-pack-template="{template["id"]}"><div class="review-index">{source.id}</div>{"".join(layers)}</article></section>')
+    grouped = {}
+    for template in selected.values():
+        grouped.setdefault((template['image'], template['fit']), []).append(template['id'])
+    image_styles = ''.join(','.join(f'.pack-bg-{index}' for index in ids) + f"{{background-image:url('{backgrounds[name]}');background-size:{fit};background-repeat:no-repeat;background-color:#070a0f}}" for (name, fit), ids in grouped.items())
+    layer_styles = '.pack-layer{position:absolute;overflow:hidden;direction:rtl;line-height:1.45;font-weight:700;white-space:normal}.pack-layer.phone{direction:ltr;white-space:nowrap;line-height:1.3}'
+    header = f'<header><h1>{escape(title)}</h1><p>پک شخصی: {escape(row["name"])} · نسخهٔ {escape(row["version"])} · تصاویر خصوصی و متن‌های موجودی مستقل</p></header>' if review else ''
+    csp = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'"
+    return '<!doctype html><html lang="fa"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="' + csp + '"><title>' + escape(title) + '</title><style>' + stylesheet([]) + image_styles + layer_styles + '</style></head><body' + (' class="single"' if not review else '') + '>' + header + '<main>' + ''.join(cards) + '</main></body></html>'

@@ -106,7 +106,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             upgraded = connect(path)
-            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 3)
+            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 4)
             self.assertEqual(upgraded.execute('SELECT phone FROM inventory').fetchone()[0], self.phones[0])
             self.assertEqual(upgraded.execute('SELECT count(*) FROM audit').fetchone()[0], 1)
             upgraded.close()
@@ -180,7 +180,7 @@ class ContentTests(unittest.TestCase):
             self.assertNotIn('enabled', [x[1] for x in old.execute('PRAGMA table_info(users)')])
             old.close()
             upgraded = connect(path)
-            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 3)
+            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 4)
             upgraded.close()
 
     def test_migration_from_v2_preserves_existing_exports(self):
@@ -196,7 +196,26 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 3)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 4)
             self.assertEqual(db.execute("SELECT state,digest FROM content_exports WHERE id='old'").fetchone()['state'], 'ready')
             self.assertEqual(db.execute("SELECT digest FROM content_exports WHERE id='old'").fetchone()[0], 'test-digest')
+            db.close()
+
+    def test_migration_from_v3_preserves_builtin_designs(self):
+        import espadna.core
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'v3.db'
+            old = sqlite3.connect(path)
+            for filename in ('schema.sql', 'migration_002.sql', 'migration_003.sql'):
+                old.executescript(Path(espadna.core.__file__).with_name(filename).read_text(encoding='utf-8'))
+            old.execute("INSERT INTO users(telegram_id,role) VALUES(1,'owner')")
+            old.execute("INSERT INTO content_plans(id,month,state,created_by) VALUES(1,'2026-11','approved',1)")
+            old.execute("INSERT INTO content_exports(id,actor,plan_id,plan_revision,digest) VALUES('old',1,1,1,'test-digest')")
+            old.commit()
+            old.close()
+            db = connect(path)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 4)
+            self.assertIsNone(db.execute('SELECT design_pack_id FROM content_plans').fetchone()[0])
+            self.assertTrue(export_status(db, 1, 'old')['design_current'])
+            self.assertIsNone(db.execute('SELECT pack_id FROM design_preferences').fetchone()[0])
             db.close()

@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 import struct
 import tempfile
-from .artwork import DESIGN_VERSION, document
+from .artwork import DESIGN_STATUS, DESIGN_VERSION, document
 from .content import create_export, export_status
 from .core import audit, require
+from .packs import load_pack
 
 
 def render_html(html, directory, channel=None):
@@ -28,7 +29,8 @@ def render_html(html, directory, channel=None):
             page = context.new_page()
             page.set_content(html, wait_until='load')
             page.evaluate('document.fonts.ready')
-            if not page.evaluate("document.fonts.check('700 76px Vazirmatn')"):
+            needs_font = page.locator('.story:not(.layout-custom), .pack-layer').count() > 0
+            if needs_font and not page.evaluate("document.fonts.check('700 76px Vazirmatn')"):
                 raise ValueError('bundled Persian font did not load')
             cards = page.locator('.story')
             for index in range(cards.count()):
@@ -37,11 +39,12 @@ def render_html(html, directory, channel=None):
                     width:card.offsetWidth,height:card.offsetHeight,
                     background:getComputedStyle(card).backgroundImage !== 'none',
                     clipped:[...card.querySelectorAll('.phone')].some(n=>n.scrollWidth>n.clientWidth+1),
-                    titleOverlap:!card.classList.contains('layout-brand')&&card.querySelector('h2').getBoundingClientRect().bottom>card.querySelector('.composition').getBoundingClientRect().top,
-                    ctaOverlap:!['layout-phone','layout-map','layout-gift','layout-tree','layout-brand','layout-hero'].some(k=>card.classList.contains(k))&&card.querySelector('.composition').getBoundingClientRect().bottom>card.querySelector('.cta').getBoundingClientRect().top,
+                    titleOverlap:!card.classList.contains('layout-custom')&&!card.classList.contains('layout-brand')&&card.querySelector('h2').getBoundingClientRect().bottom>card.querySelector('.composition').getBoundingClientRect().top,
+                    ctaOverlap:!['layout-custom','layout-phone','layout-map','layout-gift','layout-tree','layout-brand','layout-hero'].some(k=>card.classList.contains(k))&&card.querySelector('.composition').getBoundingClientRect().bottom>card.querySelector('.cta').getBoundingClientRect().top,
+                    layerClipped:[...card.querySelectorAll('.pack-layer')].some(n=>n.scrollWidth>n.clientWidth+1||n.scrollHeight>n.clientHeight+1),
                     gold:[...card.querySelectorAll('.phone')].every(n=>getComputedStyle(n).color==='rgb(255, 230, 154)'&&getComputedStyle(n).direction==='ltr')
                 })''')
-                if check['width'] != 1080 or check['height'] != 1920 or not check['background'] or check['clipped'] or not check['gold'] or check['titleOverlap'] or check['ctaOverlap']:
+                if check['width'] != 1080 or check['height'] != 1920 or not check['background'] or check['clipped'] or check['layerClipped'] or not check['gold'] or check['titleOverlap'] or check['ctaOverlap']:
                     raise ValueError('artwork layout validation failed')
                 filename = f'story-{index+1:02}.png'
                 card.screenshot(path=str(Path(directory) / filename), animations='disabled')
@@ -86,7 +89,13 @@ def render_day(db, actor, plan_id, day, output, channel=None, renderer=None):
             items = [{**item, 'day': day} for item in snapshot['items'] if item['scheduled_at'][:10] == day]
             if len(items) != 6:
                 raise ValueError('day not present in plan')
-            html = document(items, title=f'اسپادنا سیم — {day}', review=False)
+            design = db.execute('SELECT design_pack_id,design_pack_revision FROM content_exports WHERE id=?', (export_id,)).fetchone()
+            pack = load_pack(db, design['design_pack_id']) if design['design_pack_id'] else None
+            if pack and pack[0]['revision'] != design['design_pack_revision']:
+                raise ValueError('pack changed before rendering')
+            design_version = 'pack:' + pack[0]['digest'] if pack else DESIGN_VERSION
+            design_status = 'owner_reviewed' if pack else DESIGN_STATUS
+            html = document(items, title=f'اسپادنا سیم — {day}', review=False, pack=pack)
             (stage / 'editable.html').write_text(html, encoding='utf-8')
             names = (renderer or render_html)(html, stage, channel)
             expected = [f'story-{n:02}.png' for n in range(1, 7)]
@@ -94,16 +103,18 @@ def render_day(db, actor, plan_id, day, output, channel=None, renderer=None):
                 raise ValueError('expected six 1080x1920 PNG files')
             names += ['editable.html', 'inventory.json']
             hashes = {name: hashlib.sha256((stage / name).read_bytes()).hexdigest() for name in names}
-            manifest = {'export_id': export_id, 'day': day, 'design_version': DESIGN_VERSION,
-                        'design_status': 'requires_visual_review', 'files': hashes}
+            manifest = {'export_id': export_id, 'day': day, 'design_version': design_version,
+                        'design_status': design_status, 'files': hashes}
             (stage / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
             hashes['manifest.json'] = hashlib.sha256((stage / 'manifest.json').read_bytes()).hexdigest()
             db.execute('BEGIN IMMEDIATE')
             try:
                 require(db, actor, {'owner', 'admin', 'viewer'})
                 status = export_status(db, actor, export_id)
-                if not status['inventory_current'] or status['state'] != 'pending':
-                    raise ValueError('inventory changed during rendering; discard output')
+                if not status['inventory_current'] or not status['design_current'] or status['state'] != 'pending':
+                    raise ValueError('inventory or design changed during rendering; discard output')
+                if pack:
+                    load_pack(db, design['design_pack_id'])  # Detect file tampering during render too.
                 target.mkdir()  # Exclusive: never overwrite an existing folder.
                 made_target = True
                 for name in hashes:
@@ -111,12 +122,12 @@ def render_day(db, actor, plan_id, day, output, channel=None, renderer=None):
                     published_files.append(target / name)
                     db.execute('INSERT INTO artifact_files VALUES(?,?,?)', (export_id, name, hashes[name]))
                 db.execute("UPDATE content_exports SET state='ready' WHERE id=?", (export_id,))
-                audit(db, actor, 'render_ready', export_id, after={'day': day, 'design_version': DESIGN_VERSION, 'images': 6})
+                audit(db, actor, 'render_ready', export_id, after={'day': day, 'design_version': design_version, 'images': 6})
                 db.execute('COMMIT')
             except Exception:
                 db.execute('ROLLBACK')
                 raise
-        return {'export_id': export_id, 'images': 6, 'day': day, 'design_status': 'requires_visual_review'}
+        return {'export_id': export_id, 'images': 6, 'day': day, 'design_status': design_status}
     except Exception:
         # Only remove files created by this invocation. Do not recursively delete
         # a user-selected directory or remove any unrelated files.
@@ -143,15 +154,24 @@ def verify_bundle(db, actor, export_id, directory):
     status = export_status(db, actor, export_id)
     rows = db.execute('SELECT filename,digest FROM artifact_files WHERE export_id=?', (export_id,)).fetchall()
     matches = bool(rows)
+    source_intact = True
+    if status['design_pack_id']:
+        try:
+            load_pack(db, status['design_pack_id'])
+        except (ValueError, OSError):
+            source_intact = False
     root = Path(directory).resolve()
     for row in rows:
         path = root / row['filename']
         # Stored names originate in render_day, but still reject unsafe paths.
-        if path.resolve().parent != root or not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
+        limit = 128 * 1024 * 1024 if row['filename'] == 'editable.html' else 32 * 1024 * 1024
+        if path.resolve().parent != root or not path.is_file() or path.stat().st_size > limit:
             matches = False
             continue
         with path.open('rb') as file:
-            data = file.read(32 * 1024 * 1024 + 1)
-        if len(data) > 32 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != row['digest']:
+            data = file.read(limit + 1)
+        if len(data) > limit or hashlib.sha256(data).hexdigest() != row['digest']:
             matches = False
-    return {**status, 'files_match': matches, 'usable': status['valid'] and matches, 'design_status': 'requires_visual_review'}
+    return {**status, 'files_match': matches, 'design_source_intact': source_intact,
+            'usable': status['valid'] and matches and source_intact,
+            'design_status': 'owner_reviewed' if status['design_pack_id'] else DESIGN_STATUS}

@@ -41,6 +41,22 @@ def main():
     verify.add_argument('export_id')
     verify.add_argument('directory')
     verify.add_argument('--actor', required=True, type=int)
+    pack_import = commands.add_parser('pack-import')
+    pack_import.add_argument('source', help='private directory or flat ZIP containing pack.json and images')
+    pack_import.add_argument('--store', required=True, help='private image storage outside Git')
+    pack_import.add_argument('--actor', required=True, type=int)
+    pack_list = commands.add_parser('packs')
+    pack_list.add_argument('--actor', required=True, type=int)
+    for name in ('pack-approve', 'pack-disable', 'pack-default'):
+        pack_command = commands.add_parser(name)
+        pack_command.add_argument('pack_id', help='pack ID; pack-default also accepts builtin')
+        pack_command.add_argument('--actor', required=True, type=int)
+        if name == 'pack-approve':
+            pack_command.add_argument('--reviewed-no-prices', action='store_true', help='owner checked pixels/text for prices and fixed inventory claims')
+    pack_use = commands.add_parser('pack-use')
+    pack_use.add_argument('plan_id', type=int)
+    pack_use.add_argument('pack_id', help='approved pack ID or builtin')
+    pack_use.add_argument('--actor', required=True, type=int)
     args = parser.parse_args()
     if args.command == 'bot':
         from .bot import run
@@ -83,6 +99,25 @@ def main():
             elif args.command == 'bundle-check':
                 from .raster import verify_bundle
                 print(json.dumps(verify_bundle(db, args.actor, args.export_id, args.directory)))
+            elif args.command in ('pack-import', 'packs', 'pack-approve', 'pack-disable', 'pack-default', 'pack-use'):
+                from .packs import import_pack, list_packs, approve_pack, disable_pack, set_default_pack, select_plan_pack, pack_row
+                if args.command == 'pack-import':
+                    pack_id = import_pack(db, args.actor, args.source, args.store)
+                    print(json.dumps({'pack_id': pack_id, 'state': pack_row(db, pack_id)['state']}))
+                elif args.command == 'packs':
+                    print(json.dumps(list_packs(db, args.actor), ensure_ascii=False))
+                elif args.command == 'pack-approve':
+                    approve_pack(db, args.actor, args.pack_id, args.reviewed_no_prices)
+                    print('pack approved for use')
+                elif args.command == 'pack-disable':
+                    disable_pack(db, args.actor, args.pack_id)
+                    print('pack disabled; previous exports require revalidation')
+                elif args.command == 'pack-default':
+                    set_default_pack(db, args.actor, None if args.pack_id == 'builtin' else args.pack_id)
+                    print('default pack updated for future plans')
+                else:
+                    select_plan_pack(db, args.actor, args.plan_id, None if args.pack_id == 'builtin' else args.pack_id)
+                    print('plan pack selected; check plan status and reapprove if changed')
     except (ValueError, OSError) as exc:
         parser.exit(1, str(exc) + '\n')
     finally:

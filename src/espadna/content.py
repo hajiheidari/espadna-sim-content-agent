@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 import re
 from zoneinfo import ZoneInfo
 from .core import audit, caption, public_item, require
+from .packs import default_pack, design_ready, pack_row
 
 
 def month_days(month):
@@ -43,7 +44,10 @@ def create_plan(db, actor, month):
         available = db.execute("SELECT phone,revision FROM inventory WHERE sale_status='available' ORDER BY phone").fetchall()
         if len(available) < 6:
             raise ValueError('at least six available numbers required')
-        plan_id = db.execute('INSERT INTO content_plans(month,created_by) VALUES(?,?)', (month, actor)).lastrowid
+        pack_id, pack_revision = default_pack(db)
+        if pack_id and pack_row(db, pack_id)['state'] != 'approved':
+            raise ValueError('default design pack is unavailable; select another pack')
+        plan_id = db.execute('INSERT INTO content_plans(month,created_by,design_pack_id,design_pack_revision) VALUES(?,?,?,?)', (month, actor, pack_id, pack_revision)).lastrowid
         for day_index, day in enumerate(days):
             for position in range(1, 7):
                 row = available[(day_index * 6 + position - 1) % len(available)]
@@ -63,7 +67,8 @@ def inspect_plan(db, actor, plan_id):
     rows = _slots(db, plan_id)
     stale = sum(_stale(row) for row in rows)
     return {'id': plan['id'], 'month': plan['month'], 'state': plan['state'],
-            'slots': len(rows), 'stale_slots': stale, 'ready': plan['state'] == 'approved' and stale == 0}
+            'slots': len(rows), 'stale_slots': stale, 'design_ready': design_ready(db, plan), 'design_pack_id': plan['design_pack_id'],
+            'ready': plan['state'] == 'approved' and stale == 0 and design_ready(db, plan)}
 
 
 def refresh_plan(db, actor, plan_id):
@@ -71,7 +76,13 @@ def refresh_plan(db, actor, plan_id):
     db.execute('BEGIN IMMEDIATE')
     try:
         require(db, actor, {'owner', 'admin'})
-        _plan(db, plan_id)
+        plan = _plan(db, plan_id)
+        pack_revision = None
+        if plan['design_pack_id']:
+            pack = pack_row(db, plan['design_pack_id'])
+            if pack['state'] != 'approved':
+                raise ValueError('design pack is unavailable; select another pack')
+            pack_revision = pack['revision']
         rows = _slots(db, plan_id)
         available = db.execute("SELECT phone,revision FROM inventory WHERE sale_status='available' ORDER BY phone").fetchall()
         if len(available) < 6:
@@ -92,7 +103,7 @@ def refresh_plan(db, actor, plan_id):
             db.execute('UPDATE content_slots SET phone=?,inventory_revision=? WHERE id=?', (replacement['phone'], revision, row['id']))
             day_used.add(replacement['phone'])
             changed += 1
-        db.execute("UPDATE content_plans SET state='draft', approved_by=NULL,revision=revision+1 WHERE id=?", (plan_id,))
+        db.execute("UPDATE content_plans SET state='draft', approved_by=NULL,revision=revision+1,design_pack_revision=? WHERE id=?", (pack_revision, plan_id))
         audit(db, actor, 'plan_refreshed', str(plan_id), after={'changed_slots': changed})
         db.execute('COMMIT')
         return changed
@@ -105,7 +116,9 @@ def approve_plan(db, actor, plan_id):
     db.execute('BEGIN IMMEDIATE')
     try:
         require(db, actor, {'owner', 'admin'})
-        _plan(db, plan_id)
+        plan = _plan(db, plan_id)
+        if not design_ready(db, plan):
+            raise ValueError('design pack is unavailable or stale; refresh/select a pack')
         if any(_stale(row) for row in _slots(db, plan_id)):
             raise ValueError('stale plan must be refreshed before approval')
         db.execute("UPDATE content_plans SET state='approved',approved_by=? WHERE id=?", (actor, plan_id))
@@ -136,7 +149,7 @@ def _payload(db, actor, plan_id):
     require(db, actor, {'owner', 'admin', 'viewer'})
     plan = _plan(db, plan_id)
     rows = _slots(db, plan_id)
-    if plan['state'] != 'approved' or any(_stale(row) for row in rows):
+    if plan['state'] != 'approved' or not design_ready(db, plan) or any(_stale(row) for row in rows):
         raise ValueError('plan is unapproved or stale')
     zone = ZoneInfo('Asia/Tehran')
     items = []
@@ -164,7 +177,9 @@ def create_export(db, actor, plan_id, output, pending=False):
         payload['export_id'] = export_id
         data = json.dumps(payload, ensure_ascii=False, indent=2).encode('utf-8')
         digest = hashlib.sha256(data).hexdigest()
-        db.execute('INSERT INTO content_exports(id,actor,plan_id,plan_revision,digest,state) VALUES(?,?,?,?,?,?)', (export_id, actor, plan_id, plan['revision'], digest, 'pending' if pending else 'ready'))
+        pack_id = plan['design_pack_id']
+        pack_digest = pack_row(db, pack_id)['digest'] if pack_id else None
+        db.execute('INSERT INTO content_exports(id,actor,plan_id,plan_revision,digest,state,design_pack_id,design_pack_revision,design_digest) VALUES(?,?,?,?,?,?,?,?,?)', (export_id, actor, plan_id, plan['revision'], digest, 'pending' if pending else 'ready', pack_id, plan['design_pack_revision'], pack_digest))
         snapshots = {(row['phone'], row['inventory_revision']) for row in rows}
         db.executemany('INSERT INTO export_items VALUES(?,?,?)', [(export_id, phone, revision) for phone, revision in snapshots])
         audit(db, actor, 'content_exported', export_id, after={'plan_id': plan_id, 'digest': digest})
@@ -193,7 +208,11 @@ def export_status(db, actor, export_id):
     changed = db.execute('''SELECT count(*) FROM export_items e JOIN inventory i ON i.phone=e.phone
                             WHERE e.export_id=? AND (i.sale_status!='available' OR i.revision!=e.inventory_revision)''', (export_id,)).fetchone()[0]
     current = changed == 0 and export['plan_revision'] == export['current_plan_revision'] and export['plan_state'] == 'approved'
-    return {'export_id': export_id, 'plan_id': export['plan_id'], 'valid': current and export['state'] == 'ready', 'inventory_current': current, 'state': export['state'], 'changed_numbers': changed, 'digest': export['digest']}
+    design_current = True
+    if export['design_pack_id']:
+        pack = pack_row(db, export['design_pack_id'])
+        design_current = pack['state'] == 'approved' and pack['revision'] == export['design_pack_revision'] and pack['digest'] == export['design_digest']
+    return {'export_id': export_id, 'plan_id': export['plan_id'], 'valid': current and design_current and export['state'] == 'ready', 'inventory_current': current, 'design_current': design_current, 'design_pack_id': export['design_pack_id'], 'state': export['state'], 'changed_numbers': changed, 'digest': export['digest']}
 
 
 def invalid_exports(db, actor):

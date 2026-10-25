@@ -3,7 +3,9 @@
 Telegram-first inventory, content production and public SIM-number catalog for **Espadna Sim**.
 
 ## Status
-Local inventory, private Telegram scaffold, monthly planning, tracked exports and 30 editable reference-based story compositions are implemented. An optional offline Chromium worker renders revision-tracked 1080×1920 PNG bundles. Designs require visual review; nothing is deployed or live. See [setup and security](docs/SETUP.fa.md) and [template design notes](docs/TEMPLATES.fa.md).
+Local inventory, private Telegram scaffold, monthly planning, tracked exports and 30 editable reference-based story compositions are implemented. An optional offline Chromium worker renders revision-tracked 1080×1920 PNG bundles. Current designs are accepted for development and can be refined later; nothing is deployed or live. See [setup and security](docs/SETUP.fa.md) and [template design notes](docs/TEMPLATES.fa.md).
+
+User-supplied PNG/JPEG/WebP packs are also supported in private versioned storage: dynamic inventory overlays or reviewed static informational images, per-plan selection, defaults for future plans, replacement and disabling without rewriting the renderer. See [personal image packs](docs/CUSTOM_PACKS.fa.md). Current design refinement does not block development.
 
 ## Product requirements
 - Roles: owner (user management), admin (inventory and sale operations), viewer (read public-safe content). Unknown users are denied.
@@ -20,7 +22,7 @@ Local inventory, private Telegram scaffold, monthly planning, tracked exports an
 Current implementation: Python 3.11+, SQLite, openpyxl and python-telegram-bot. Cloudflare Workers + D1 remains a future deployment option requiring an adapter/migration and review. Keep secrets in runtime environment, never in Git.
 
 ## Next milestones
-1. Review the 30 rebuilt compositions against the supplied reference and approve/refine the visual interpretation. They are not pixel-identical crops, and reference numbers/unsupported claims are not copied.
+1. Continue delivery workflow work using current designs; refine or replace the 30 compositions with personal image packs whenever desired. They are not pixel-identical crops, and reference numbers/unsupported claims are not copied.
 2. Establish approved image baselines after that review; current browser QA checks all 30 templates, fonts, backgrounds, dimensions, overflow and gold/LTR phone text.
 3. Build a delivery queue with retries/idempotency and last-moment inventory revalidation for 08:00 Tehran delivery. Current planning records target times only.
 4. Implement public channel publishing, updates and inquiry workflow after review and explicit launch approval.

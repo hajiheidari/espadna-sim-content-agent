@@ -1,17 +1,26 @@
 """Reference-based editable HTML proofs from live approved inventory."""
 from .artwork import document, story_markup
-from .content import approved_payload
+from .content import _payload
 
 
 def preview_day(db, actor, plan_id, day):
     from datetime import date
     if date.fromisoformat(day).isoformat() != day:
         raise ValueError('day must be ISO YYYY-MM-DD')
-    payload = approved_payload(db, actor, plan_id)
-    items = [{**item, 'day': day} for item in payload['items'] if item['scheduled_at'][:10] == day]
-    if len(items) != 6:
-        raise ValueError('day not present in plan')
-    return document(items, title=f'شش استوری روزانه — {day}')
+    from .packs import load_pack
+    db.execute('BEGIN')
+    try:
+        payload, plan, _ = _payload(db, actor, plan_id)
+        items = [{**item, 'day': day} for item in payload['items'] if item['scheduled_at'][:10] == day]
+        if len(items) != 6:
+            raise ValueError('day not present in plan')
+        pack = load_pack(db, plan['design_pack_id']) if plan['design_pack_id'] else None
+        html = document(items, title=f'شش استوری روزانه — {day}', pack=pack)
+        db.execute('COMMIT')
+        return html
+    except Exception:
+        db.execute('ROLLBACK')
+        raise
 
 
 def reference_gallery():
