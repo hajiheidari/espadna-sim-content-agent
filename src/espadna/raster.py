@@ -13,6 +13,19 @@ from .packs import load_pack
 
 def render_html(html, directory, channel=None):
     """Optional browser worker. Bundle fonts/images are offline data URLs."""
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return _render_html_sync(html, directory, channel)
+    # Keep SQLite on the calling thread. Only the pure browser/file operation
+    # runs in another thread, since Playwright's sync API rejects an event loop.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        return workers.submit(_render_html_sync, html, directory, channel).result()
+
+
+def _render_html_sync(html, directory, channel=None):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:

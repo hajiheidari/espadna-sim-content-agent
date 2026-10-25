@@ -57,6 +57,31 @@ def main():
     pack_use.add_argument('plan_id', type=int)
     pack_use.add_argument('pack_id', help='approved pack ID or builtin')
     pack_use.add_argument('--actor', required=True, type=int)
+    route = commands.add_parser('queue-route')
+    route.add_argument('recipient', type=int)
+    route.add_argument('--disable', action='store_true')
+    route.add_argument('--actor', required=True, type=int)
+    enqueue = commands.add_parser('queue-enqueue')
+    enqueue.add_argument('plan_id', type=int)
+    enqueue.add_argument('--mode', choices=('dry_run', 'telegram'), default='dry_run')
+    enqueue.add_argument('--actor', required=True, type=int)
+    queue_list = commands.add_parser('queue-list')
+    queue_list.add_argument('--actor', required=True, type=int)
+    cancel = commands.add_parser('queue-cancel')
+    cancel.add_argument('job_id')
+    cancel.add_argument('--actor', required=True, type=int)
+    resolve = commands.add_parser('queue-resolve')
+    resolve.add_argument('job_id')
+    resolve.add_argument('--result', choices=('sent', 'not-sent'), required=True)
+    resolve.add_argument('--message-ids', default='', help='six confirmed message IDs separated by commas')
+    resolve.add_argument('--actor', required=True, type=int)
+    runner = commands.add_parser('queue-run')
+    runner.add_argument('--actor', required=True, type=int)
+    runner.add_argument('--root', required=True, help='private rendered-bundle storage outside Git')
+    runner.add_argument('--mode', choices=('dry_run', 'telegram'), default='dry_run')
+    runner.add_argument('--allow-network', action='store_true')
+    runner.add_argument('--limit', type=int, default=1)
+    runner.add_argument('--browser-channel', choices=('msedge', 'chrome', 'chromium'))
     args = parser.parse_args()
     if args.command == 'bot':
         from .bot import run
@@ -118,6 +143,26 @@ def main():
                 else:
                     select_plan_pack(db, args.actor, args.plan_id, None if args.pack_id == 'builtin' else args.pack_id)
                     print('plan pack selected; check plan status and reapprove if changed')
+            elif args.command.startswith('queue-'):
+                from .delivery import set_route, enqueue_plan, list_jobs, cancel_job, resolve_uncertain
+                if args.command == 'queue-route':
+                    set_route(db, args.actor, args.recipient, not args.disable)
+                    print('private delivery route updated')
+                elif args.command == 'queue-enqueue':
+                    print(json.dumps(enqueue_plan(db, args.actor, args.plan_id, args.mode)))
+                elif args.command == 'queue-list':
+                    print(json.dumps(list_jobs(db, args.actor)))
+                elif args.command == 'queue-cancel':
+                    cancel_job(db, args.actor, args.job_id)
+                    print('delivery cancelled')
+                elif args.command == 'queue-resolve':
+                    ids = tuple(int(value.strip()) for value in args.message_ids.split(',') if value.strip())
+                    resolve_uncertain(db, args.actor, args.job_id, args.result == 'sent', ids)
+                    print('delivery result reconciled')
+                else:
+                    import asyncio
+                    from .delivery_runtime import run_ticks
+                    print(json.dumps(asyncio.run(run_ticks(db, args.actor, args.root, args.mode, args.allow_network, args.limit, args.browser_channel))))
     except (ValueError, OSError) as exc:
         parser.exit(1, str(exc) + '\n')
     finally:

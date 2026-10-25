@@ -20,8 +20,11 @@ def build_application(token, database):
     async def command(update, context):
         db = connect(database)
         try:
-            actor = authorize(update, db, {'owner', 'admin', 'viewer'})
             name = update.effective_message.text.split()[0].split('@')[0]
+            if name == '/myid' and update.effective_chat.type == 'private' and update.effective_user:
+                await update.effective_message.reply_text(f'شناسهٔ تلگرام شما: {update.effective_user.id}')
+                return  # Reveals only the caller's ID; never grants a role.
+            actor = authorize(update, db, {'owner', 'admin', 'viewer'})
             if name == '/role':
                 if len(context.args) != 2:
                     raise ValueError('usage')
@@ -44,6 +47,27 @@ def build_application(token, database):
                 from .content import invalid_exports
                 alerts = invalid_exports(db, actor)
                 text = '\n'.join(f"خروجی نامعتبر: {item['export_id']} (برنامه {item['plan_id']})" for item in alerts[:20]) or 'خروجی نامعتبر ثبت نشده است.'
+            elif name in ('/route', '/unroute', '/enqueue', '/queue', '/canceljob'):
+                from .delivery import set_route, enqueue_plan, list_jobs, cancel_job
+                if name in ('/route', '/unroute'):
+                    if len(context.args) != 1:
+                        raise ValueError('usage')
+                    set_route(db, actor, int(context.args[0]), name == '/route')
+                    text = 'مسیر تحویل خصوصی ثبت شد.'
+                elif name == '/enqueue':
+                    if len(context.args) not in (1, 2):
+                        raise ValueError('usage')
+                    mode = context.args[1] if len(context.args) == 2 else 'dry_run'
+                    counts = enqueue_plan(db, actor, int(context.args[0]), mode)
+                    text = f"کار جدید {counts['created']}، به‌روزرسانی {counts['updated']}؛ حالت {mode}. هیچ ارسال مستقیمی انجام نشد."
+                elif name == '/canceljob':
+                    if len(context.args) != 1:
+                        raise ValueError('usage')
+                    cancel_job(db, actor, context.args[0])
+                    text = 'کار صف لغو شد.'
+                else:
+                    jobs = list_jobs(db, actor)
+                    text = '\n'.join(f"{j['day']} / {j['mode']} / {j['state']}\n{j['id']}" for j in jobs[:15]) or 'کاری در صف نیست.'
             elif name in ('/packs', '/packapprove', '/packdisable', '/packdefault', '/packuse'):
                 from .packs import list_packs, approve_pack, disable_pack, set_default_pack, select_plan_pack
                 if name == '/packs':
@@ -86,7 +110,7 @@ def build_application(token, database):
                     status = inspect_plan(db, actor, int(context.args[0]))
                     text = f"وضعیت: {status['state']}، تعداد: {status['slots']}، موارد نیازمند بازسازی: {status['stale_slots']}"
             else:
-                text = '/catalog\n/alerts\n/packs\n/packapprove PACK_ID reviewed\n/packdisable PACK_ID\n/packdefault PACK_ID|builtin\n/packuse PLAN_ID PACK_ID|builtin\n/sale NUMBER available|reserved|sold\n/role USER_ID owner|admin|viewer\n/revoke USER_ID\n/plan YYYY-MM\n/planstatus ID\n/approve ID\n/refresh ID\nاکسل: ارسال xlsx توسط مالک یا ادمین. پک شخصی: ZIP شامل pack.json و عکس‌ها، فقط مالک در چت خصوصی.'
+                text = '/myid\n/catalog\n/alerts\n/queue\n/route USER_ID\n/unroute USER_ID\n/enqueue PLAN_ID [dry_run|telegram]\n/canceljob JOB_ID\n/packs\n/packapprove PACK_ID reviewed\n/packdisable PACK_ID\n/packdefault PACK_ID|builtin\n/packuse PLAN_ID PACK_ID|builtin\n/sale NUMBER available|reserved|sold\n/role USER_ID owner|admin|viewer\n/revoke USER_ID\n/plan YYYY-MM\n/planstatus ID\n/approve ID\n/refresh ID\nاکسل: ارسال xlsx توسط مالک یا ادمین. پک شخصی: ZIP شامل pack.json و عکس‌ها، فقط مالک در چت خصوصی.'
             await update.effective_message.reply_text(text)
         except (ValueError, PermissionError):
             await update.effective_message.reply_text('درخواست نامعتبر است یا دسترسی ندارید.')
@@ -132,7 +156,7 @@ def build_application(token, database):
         logging.getLogger(__name__).error('Telegram operation failed (%s)', type(context.error).__name__)
 
     app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler(['start', 'help', 'role', 'revoke', 'sale', 'catalog', 'plan', 'planstatus', 'approve', 'refresh', 'alerts', 'packs', 'packapprove', 'packdisable', 'packdefault', 'packuse'], command))
+    app.add_handler(CommandHandler(['start', 'help', 'myid', 'role', 'revoke', 'sale', 'catalog', 'plan', 'planstatus', 'approve', 'refresh', 'alerts', 'packs', 'packapprove', 'packdisable', 'packdefault', 'packuse', 'route', 'unroute', 'enqueue', 'queue', 'canceljob'], command))
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_error_handler(error)
     return app

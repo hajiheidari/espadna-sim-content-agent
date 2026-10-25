@@ -16,6 +16,32 @@ from espadna.raster import _png_size, render_html
 
 
 class BrowserRenderTests(unittest.TestCase):
+    def test_queue_renders_and_simulates_a_complete_private_delivery(self):
+        import asyncio
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from espadna.delivery import enqueue_plan, run_once, set_route
+        from espadna.transports import DryRunSender
+        with tempfile.TemporaryDirectory() as tmp:
+            db = connect(':memory:')
+            try:
+                bootstrap_owner(db, 1)
+                for n in range(6):
+                    db.execute('INSERT INTO inventory(phone,sim_type,sim_status) VALUES(?,1,2)', (f'090000000{n:02}',))
+                plan = create_plan(db, 1, '2026-11')
+                approve_plan(db, 1, plan)
+                set_route(db, 1, 1)
+                now = datetime(2026, 11, 1, 8, tzinfo=ZoneInfo('Asia/Tehran'))
+                enqueue_plan(db, 1, plan, now=now)
+                sender = DryRunSender()
+                result = asyncio.run(run_once(db, 1, sender, Path(tmp) / 'private', clock=lambda: now, channel=os.environ.get('ESPADNA_BROWSER_CHANNEL')))
+                self.assertEqual(result['state'], 'simulated')
+                self.assertEqual(len(sender.bundles[0].media), 6)
+                self.assertTrue(all(len(media.data) > 100000 for media in sender.bundles[0].media))
+                self.assertIsNone(asyncio.run(run_once(db, 1, sender, Path(tmp) / 'private', clock=lambda: now)))
+            finally:
+                db.close()
+
     def test_all_thirty_templates_render_with_bundled_fonts_and_backgrounds(self):
         with tempfile.TemporaryDirectory() as tmp:
             html = document(gallery_items(), review=False)

@@ -204,7 +204,9 @@ def export_status(db, actor, export_id):
     if export is None:
         raise ValueError('unknown export')
     if role == 'viewer' and export['actor'] != actor:
-        raise PermissionError('access denied')
+        received = db.execute("SELECT 1 FROM delivery_jobs WHERE export_id=? AND recipient=? AND state='sent'", (export_id, actor)).fetchone()
+        if received is None:
+            raise PermissionError('access denied')
     changed = db.execute('''SELECT count(*) FROM export_items e JOIN inventory i ON i.phone=e.phone
                             WHERE e.export_id=? AND (i.sale_status!='available' OR i.revision!=e.inventory_revision)''', (export_id,)).fetchone()[0]
     current = changed == 0 and export['plan_revision'] == export['current_plan_revision'] and export['plan_state'] == 'approved'
@@ -217,5 +219,5 @@ def export_status(db, actor, export_id):
 
 def invalid_exports(db, actor):
     role = require(db, actor, {'owner', 'admin', 'viewer'})
-    ids = db.execute('SELECT id FROM content_exports WHERE actor=?' if role == 'viewer' else 'SELECT id FROM content_exports', (actor,) if role == 'viewer' else ()).fetchall()
+    ids = db.execute("SELECT id FROM content_exports WHERE actor=? OR id IN (SELECT export_id FROM delivery_jobs WHERE recipient=? AND state='sent')" if role == 'viewer' else 'SELECT id FROM content_exports', (actor, actor) if role == 'viewer' else ()).fetchall()
     return [status for row in ids if not (status := export_status(db, actor, row['id']))['valid']]

@@ -7,6 +7,8 @@ Local inventory, private Telegram scaffold, monthly planning, tracked exports an
 
 User-supplied PNG/JPEG/WebP packs are also supported in private versioned storage: dynamic inventory overlays or reviewed static informational images, per-plan selection, defaults for future plans, replacement and disabling without rewriting the renderer. See [personal image packs](docs/CUSTOM_PACKS.fa.md). Current design refinement does not block development.
 
+A durable private delivery queue now records 08:00 Tehran due times, exclusive worker leases, bounded retries and confirmed/uncertain outcomes. Dry-run is the default; the Telegram adapter requires explicit owner launch and local credentials. No timer, network delivery or deployment is active. See [delivery operations](docs/DELIVERY.fa.md).
+
 ## Product requirements
 - Roles: owner (user management), admin (inventory and sale operations), viewer (read public-safe content). Unknown users are denied.
 - Excel import is additive only. Missing numbers never delete records. Imports never reset sale/reservation state. Role management is owner-only; changes are audited.
@@ -24,8 +26,8 @@ Current implementation: Python 3.11+, SQLite, openpyxl and python-telegram-bot. 
 ## Next milestones
 1. Continue delivery workflow work using current designs; refine or replace the 30 compositions with personal image packs whenever desired. They are not pixel-identical crops, and reference numbers/unsupported claims are not copied.
 2. Establish approved image baselines after that review; current browser QA checks all 30 templates, fonts, backgrounds, dimensions, overflow and gold/LTR phone text.
-3. Build a delivery queue with retries/idempotency and last-moment inventory revalidation for 08:00 Tehran delivery. Current planning records target times only.
-4. Implement public channel publishing, updates and inquiry workflow after review and explicit launch approval.
+3. Configure the real owner/private recipients and privately stored credentials, then review and explicitly launch the private worker; add a host timer only as part of that launch. Current runs are tests/simulations.
+4. Implement push warnings for invalid downloaded content, then public channel publishing, updates and inquiry workflow after review and explicit launch approval.
 
 ## Security
 This repository is public. **Never commit bot tokens, private phone lists, customer data, server keys, or inventory Excel files.** Use environment secrets and test fixtures only.
