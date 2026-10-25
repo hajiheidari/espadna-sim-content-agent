@@ -31,6 +31,16 @@ def main():
     preview.add_argument('day', help='Gregorian YYYY-MM-DD')
     preview.add_argument('--actor', required=True, type=int)
     preview.add_argument('--output', required=True, help='new private HTML file outside a Git checkout')
+    render = commands.add_parser('plan-render')
+    render.add_argument('plan_id', type=int)
+    render.add_argument('day')
+    render.add_argument('--actor', required=True, type=int)
+    render.add_argument('--output', required=True, help='new private output directory')
+    render.add_argument('--browser-channel', default=None, choices=('msedge', 'chrome', 'chromium'))
+    verify = commands.add_parser('bundle-check')
+    verify.add_argument('export_id')
+    verify.add_argument('directory')
+    verify.add_argument('--actor', required=True, type=int)
     args = parser.parse_args()
     if args.command == 'bot':
         from .bot import run
@@ -67,6 +77,12 @@ def main():
                 with output.open('x', encoding='utf-8') as file:
                     file.write(html)
                 print('draft preview created; revalidate before using')
+            elif args.command == 'plan-render':
+                from .raster import render_day
+                print(json.dumps(render_day(db, args.actor, args.plan_id, args.day, args.output, args.browser_channel)))
+            elif args.command == 'bundle-check':
+                from .raster import verify_bundle
+                print(json.dumps(verify_bundle(db, args.actor, args.export_id, args.directory)))
     except (ValueError, OSError) as exc:
         parser.exit(1, str(exc) + '\n')
     finally:

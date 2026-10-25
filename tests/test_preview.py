@@ -14,7 +14,7 @@ class PreviewTests(unittest.TestCase):
             plan = create_plan(db, 1, '2026-11')
             approve_plan(db, 1, plan)
             html = preview_day(db, 1, plan, '2026-11-01')
-            self.assertEqual(html.count('<article class="story"'), 6)
+            self.assertEqual(html.count('data-template="'), 6)
             self.assertIn('0900 000 0000', html)
             self.assertNotIn('76543210', html)
             self.assertNotIn('<script', html)

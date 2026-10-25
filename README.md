@@ -3,7 +3,7 @@
 Telegram-first inventory, content production and public SIM-number catalog for **Espadna Sim**.
 
 ## Status
-Local inventory, private Telegram scaffold, monthly content planning, tracked exports and editable draft HTML proof sheets are implemented. Nothing is deployed or live. See [setup and security](docs/SETUP.fa.md).
+Local inventory, private Telegram scaffold, monthly planning, tracked exports and 30 editable reference-based story compositions are implemented. An optional offline Chromium worker renders revision-tracked 1080×1920 PNG bundles. Designs require visual review; nothing is deployed or live. See [setup and security](docs/SETUP.fa.md) and [template design notes](docs/TEMPLATES.fa.md).
 
 ## Product requirements
 - Roles: owner (user management), admin (inventory and sale operations), viewer (read public-safe content). Unknown users are denied.
@@ -20,8 +20,8 @@ Local inventory, private Telegram scaffold, monthly content planning, tracked ex
 Current implementation: Python 3.11+, SQLite, openpyxl and python-telegram-bot. Cloudflare Workers + D1 remains a future deployment option requiring an adapter/migration and review. Keep secrets in runtime environment, never in Git.
 
 ## Next milestones
-1. Obtain the approved contact sheet and rebuild its 30 individual story compositions; the current HTML renderer is a visibly marked draft proof, not an approved template.
-2. Add raster rendering and reference-image verification on top of the validated public-content boundary.
+1. Review the 30 rebuilt compositions against the supplied reference and approve/refine the visual interpretation. They are not pixel-identical crops, and reference numbers/unsupported claims are not copied.
+2. Establish approved image baselines after that review; current browser QA checks all 30 templates, fonts, backgrounds, dimensions, overflow and gold/LTR phone text.
 3. Build a delivery queue with retries/idempotency and last-moment inventory revalidation for 08:00 Tehran delivery. Current planning records target times only.
 4. Implement public channel publishing, updates and inquiry workflow after review and explicit launch approval.
 

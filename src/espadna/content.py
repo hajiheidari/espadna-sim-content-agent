@@ -147,7 +147,7 @@ def _payload(db, actor, plan_id):
     return {'plan_id': plan_id, 'month': plan['month'], 'timezone': 'Asia/Tehran', 'items': items}, plan, rows
 
 
-def create_export(db, actor, plan_id, output):
+def create_export(db, actor, plan_id, output, pending=False):
     """Track a private export and its inventory revisions. Never overwrite files."""
     from pathlib import Path
     import hashlib
@@ -164,7 +164,7 @@ def create_export(db, actor, plan_id, output):
         payload['export_id'] = export_id
         data = json.dumps(payload, ensure_ascii=False, indent=2).encode('utf-8')
         digest = hashlib.sha256(data).hexdigest()
-        db.execute('INSERT INTO content_exports(id,actor,plan_id,plan_revision,digest) VALUES(?,?,?,?,?)', (export_id, actor, plan_id, plan['revision'], digest))
+        db.execute('INSERT INTO content_exports(id,actor,plan_id,plan_revision,digest,state) VALUES(?,?,?,?,?,?)', (export_id, actor, plan_id, plan['revision'], digest, 'pending' if pending else 'ready'))
         snapshots = {(row['phone'], row['inventory_revision']) for row in rows}
         db.executemany('INSERT INTO export_items VALUES(?,?,?)', [(export_id, phone, revision) for phone, revision in snapshots])
         audit(db, actor, 'content_exported', export_id, after={'plan_id': plan_id, 'digest': digest})
@@ -183,7 +183,7 @@ def create_export(db, actor, plan_id, output):
 
 def export_status(db, actor, export_id):
     role = require(db, actor, {'owner', 'admin', 'viewer'})
-    export = db.execute('''SELECT e.*,p.revision AS current_plan_revision,p.state
+    export = db.execute('''SELECT e.*,p.revision AS current_plan_revision,p.state AS plan_state
                             FROM content_exports e JOIN content_plans p ON p.id=e.plan_id
                             WHERE e.id=?''', (export_id,)).fetchone()
     if export is None:
@@ -192,8 +192,8 @@ def export_status(db, actor, export_id):
         raise PermissionError('access denied')
     changed = db.execute('''SELECT count(*) FROM export_items e JOIN inventory i ON i.phone=e.phone
                             WHERE e.export_id=? AND (i.sale_status!='available' OR i.revision!=e.inventory_revision)''', (export_id,)).fetchone()[0]
-    valid = changed == 0 and export['plan_revision'] == export['current_plan_revision'] and export['state'] == 'approved'
-    return {'export_id': export_id, 'plan_id': export['plan_id'], 'valid': valid, 'changed_numbers': changed, 'digest': export['digest']}
+    current = changed == 0 and export['plan_revision'] == export['current_plan_revision'] and export['plan_state'] == 'approved'
+    return {'export_id': export_id, 'plan_id': export['plan_id'], 'valid': current and export['state'] == 'ready', 'inventory_current': current, 'state': export['state'], 'changed_numbers': changed, 'digest': export['digest']}
 
 
 def invalid_exports(db, actor):
