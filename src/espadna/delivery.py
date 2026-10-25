@@ -160,6 +160,18 @@ def claim_next(db, actor, mode='dry_run', now=None):
         return dict(_job(db, row['id']))
 
 
+def expire_waiting(db, actor, mode, now=None):
+    """Expire old queued work without contacting Telegram or claiming a job."""
+    if mode not in MODES:
+        raise ValueError('unknown delivery mode')
+    stamp = epoch(now or utc_now())
+    with transaction(db):
+        require(db, actor, {'owner', 'admin'})
+        count = db.execute("UPDATE delivery_jobs SET state='expired',error_code='day_expired' WHERE mode=? AND state IN ('queued','retry') AND expires_at<=?", (mode, stamp)).rowcount
+        if count:
+            audit(db, actor, 'delivery_expired', mode, after={'count': count})
+
+
 def _validate_job(db, actor, job_id, token, stamp):
     row = _job(db, job_id)
     require(db, actor, {'owner'} if row['mode'] == 'telegram' else {'owner', 'admin'})

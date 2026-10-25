@@ -11,6 +11,27 @@ TOKEN = '123456:TEST_ONLY_PLACEHOLDER_VALUE'
 
 
 class CredentialTests(unittest.TestCase):
+    def test_local_polling_does_not_load_credentials_without_network_opt_in(self):
+        from espadna.local_bot import run_config
+        with patch('espadna.local_bot.read_config', return_value=({'mode': 'dry_run', 'allow_network': False}, Path('unused'), Path('unused'))), patch('espadna.local_bot.get_token') as token:
+            with self.assertRaises(PermissionError):
+                run_config('unused')
+            token.assert_not_called()
+
+    def test_local_polling_refuses_an_existing_webhook_without_mutating_it(self):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from espadna.local_bot import ensure_no_webhook
+        bot = SimpleNamespace(get_webhook_info=AsyncMock(return_value=SimpleNamespace(url='https://example.invalid/existing')), delete_webhook=AsyncMock())
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=bot)
+        context.__aexit__ = AsyncMock(return_value=False)
+        with patch('telegram.Bot', return_value=context):
+            with self.assertRaises(ValueError):
+                asyncio.run(ensure_no_webhook(TOKEN))
+        bot.delete_webhook.assert_not_called()
+
     def test_bot_check_reads_identity_without_sending_and_sanitizes_errors(self):
         import asyncio
         from types import SimpleNamespace

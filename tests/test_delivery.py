@@ -275,6 +275,38 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             asyncio.run(run_ticks(self.db, 1, self.root, limit=0))
 
+    def test_idle_live_worker_does_not_connect_or_read_credentials(self):
+        from unittest.mock import patch
+        from espadna.delivery_runtime import run_ticks
+        self.enqueue('telegram')
+        with patch('espadna.delivery.utc_now', return_value=self.clock()), patch('espadna.delivery_runtime.utc_now', return_value=self.clock()), patch('telegram.Bot') as bot, patch('espadna.credentials.get_token') as credential:
+            result = asyncio.run(run_ticks(self.db, 1, self.root, 'telegram', True))
+        self.assertEqual(result, [])
+        bot.assert_not_called()
+        credential.assert_not_called()
+
+    def test_local_trial_worker_rejects_any_extra_recipient(self):
+        import json
+        from espadna.local_worker import run_config
+        path = self.root / 'trial.db'
+        db = connect(path)
+        self.db.backup(db)
+        db.close()
+        config = self.root / 'trial.json'
+        config.write_text(json.dumps({'database': str(path), 'actor': 1, 'artifact_root': str(self.root / 'files'), 'mode': 'telegram', 'allow_network': True, 'owner_only': True, 'browser_channel': None}), encoding='utf-8')
+        with self.assertRaises(ValueError):
+            run_config(config)  # Only route in this fixture points to viewer 2.
+        db = connect(path)
+        set_route(db, 1, 2, False)
+        set_route(db, 1, 1)
+        db.close()
+        from unittest.mock import patch
+        with patch('espadna.delivery.utc_now', return_value=self.clock()), patch('espadna.delivery_runtime.utc_now', return_value=self.clock()), patch('telegram.Bot') as bot:
+            result = run_config(config)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['handled'], 0)
+        bot.assert_not_called()
+
 
 class TransportTests(unittest.TestCase):
     def test_myid_does_not_bootstrap_or_authorize_an_unknown_user(self):

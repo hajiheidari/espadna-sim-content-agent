@@ -7,7 +7,7 @@ Local inventory, private Telegram scaffold, monthly planning, tracked exports an
 
 User-supplied PNG/JPEG/WebP packs are also supported in private versioned storage: dynamic inventory overlays or reviewed static informational images, per-plan selection, defaults for future plans, replacement and disabling without rewriting the renderer. See [personal image packs](docs/CUSTOM_PACKS.fa.md). Current design refinement does not block development.
 
-A durable private delivery queue now records 08:00 Tehran due times, exclusive worker leases, bounded retries and confirmed/uncertain outcomes. Dry-run is the default; the Telegram adapter requires explicit owner launch and local credentials. No timer, network delivery or deployment is active. See [delivery operations](docs/DELIVERY.fa.md).
+A durable private delivery queue records 08:00 Tehran due times, exclusive worker leases, bounded retries and confirmed/uncertain outcomes. Dry-run is the default; real delivery and the optional hidden Windows trial task require explicit owner setup. The package never installs a timer or publishes a channel automatically. See [delivery operations](docs/DELIVERY.fa.md).
 
 Windows setup includes a local masked token-entry dialog and a per-user DPAPI encrypted credential file outside Git. Saving a credential does not connect or send; `bot-check` is an explicit read-only connectivity/identity check. Other hosts can use environment secrets.
 
@@ -28,7 +28,7 @@ Current implementation: Python 3.11+, SQLite, openpyxl and python-telegram-bot. 
 ## Next milestones
 1. Continue delivery workflow work using current designs; refine or replace the 30 compositions with personal image packs whenever desired. They are not pixel-identical crops, and reference numbers/unsupported claims are not copied.
 2. Establish approved image baselines after that review; current browser QA checks all 30 templates, fonts, backgrounds, dimensions, overflow and gold/LTR phone text.
-3. Configure the real owner/private recipients and privately stored credentials, then review and explicitly launch the private worker; add a host timer only as part of that launch. Current runs are tests/simulations.
+3. Extend the opted-in local owner-only trial to a continuously available host when desired; current private queue settings and task files stay outside Git. New months still require an approved plan and explicit enqueue.
 4. Implement push warnings for invalid downloaded content, then public channel publishing, updates and inquiry workflow after review and explicit launch approval.
 
 ## Security

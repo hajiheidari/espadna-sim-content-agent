@@ -1,8 +1,8 @@
 """Explicit local worker entry point. Never launches a service at import time."""
 import logging
 from .core import require
-from .delivery import run_once
-from .transports import DryRunSender, TelegramSender
+from .delivery import epoch, expire_waiting, run_once, utc_now
+from .transports import DryRunSender, TelegramSender, request_client
 
 
 async def run_ticks(db, actor, root, mode='dry_run', allow_network=False, limit=1, channel=None):
@@ -25,6 +25,11 @@ async def run_ticks(db, actor, root, mode='dry_run', allow_network=False, limit=
     else:
         if allow_network is not True:
             raise PermissionError('explicit network launch is required for real Telegram delivery')
+        expire_waiting(db, actor, mode)
+        stamp = epoch(utc_now())
+        pending = db.execute("SELECT 1 FROM delivery_jobs WHERE mode=? AND ((state IN ('queued','retry') AND due_at<=? AND next_attempt_at<=?) OR (state IN ('leased','sending') AND lease_until<=?)) LIMIT 1", (mode, stamp, stamp, stamp)).fetchone()
+        if pending is None:
+            return []  # Minute ticks outside delivery time need no token/network.
         from .credentials import get_token
         token = get_token(db.execute('PRAGMA database_list').fetchone()[2])
         if not token:
@@ -35,7 +40,7 @@ async def run_ticks(db, actor, root, mode='dry_run', allow_network=False, limit=
         from telegram import Bot
         from telegram.error import TelegramError
         try:
-            async with Bot(token) as bot:
+            async with Bot(token, request=request_client()) as bot:
                 await process(TelegramSender(bot))
         except TelegramError:
             raise ValueError('Telegram worker connection failed; inspect queue status before restarting') from None
@@ -54,7 +59,7 @@ async def check_bot(db, actor):
     from telegram import Bot
     from telegram.error import BadRequest, Forbidden, InvalidToken, TelegramError, TimedOut
     try:
-        async with Bot(token) as bot:
+        async with Bot(token, request=request_client()) as bot:
             identity = {'bot_username': bot.username, 'bot_id': bot.id, 'private_chat_available': False}
             try:
                 chat = await bot.get_chat(actor)

@@ -9,6 +9,7 @@ from .importer import MAX_BYTES, import_workbook
 
 def build_application(token, database):
     from telegram.ext import Application, CommandHandler, MessageHandler, filters
+    from .transports import request_client
 
     def authorize(update, db, roles):
         if not update.effective_chat or update.effective_chat.type != 'private' or not update.effective_user:
@@ -155,7 +156,7 @@ def build_application(token, database):
         # Never log Telegram updates, URLs (contain token), exception text or workbook data.
         logging.getLogger(__name__).error('Telegram operation failed (%s)', type(context.error).__name__)
 
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).request(request_client()).get_updates_request(request_client()).build()
     app.add_handler(CommandHandler(['start', 'help', 'myid', 'role', 'revoke', 'sale', 'catalog', 'plan', 'planstatus', 'approve', 'refresh', 'alerts', 'packs', 'packapprove', 'packdisable', 'packdefault', 'packuse', 'route', 'unroute', 'enqueue', 'queue', 'canceljob'], command))
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_error_handler(error)

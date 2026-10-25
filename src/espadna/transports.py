@@ -2,6 +2,11 @@
 from .delivery import DefiniteRejection, DefiniteRetry, DeliveryUnknown, Receipt
 
 
+def request_client():
+    from telegram.request import HTTPXRequest
+    return HTTPXRequest(connect_timeout=20, read_timeout=20, write_timeout=60, pool_timeout=20, media_write_timeout=60)
+
+
 class DryRunSender:
     mode = 'dry_run'
 
