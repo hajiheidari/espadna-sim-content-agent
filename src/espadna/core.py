@@ -31,13 +31,13 @@ def connect(path):
     db.execute('PRAGMA foreign_keys=ON')
     version = db.execute('PRAGMA user_version').fetchone()[0]
     try:
-        if version not in (0, 1, 2, 3, 4, 5, 6, 7):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8):
             raise ValueError('unsupported schema version')
-        if version < 7:
+        if version < 8:
             db.execute('BEGIN IMMEDIATE')
             # Another process may have migrated while this connection waited.
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5, 6, 7):
+            if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8):
                 raise ValueError('unsupported schema version')
             if version == 0:
                 _run_sql(db, 'schema.sql')
@@ -59,6 +59,9 @@ def connect(path):
                 version = 6
             if version == 6:
                 _run_sql(db, 'migration_007.sql')
+                version = 7
+            if version == 7:
+                _run_sql(db, 'migration_008.sql')
             db.execute('COMMIT')
     except Exception:
         db.close()

@@ -1,8 +1,10 @@
 """Private-chat Telegram scaffold; no publishing or network calls at import time."""
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 import tempfile
+from zoneinfo import ZoneInfo
 from .core import connect, require, set_role, revoke_user, set_sale_status, caption
 from .importer import (MAX_BYTES, apply_saved_sync, cancel_saved_sync,
                        prepare_saved_sync, save_sync_upload)
@@ -20,10 +22,42 @@ def build_application(token, database):
         require(db, actor, roles)
         return actor
 
+    async def notify_owners(db, bot, text, keyboard=None):
+        from .members import owners
+        for owner in owners(db):
+            await bot.send_message(chat_id=owner, text=text, reply_markup=keyboard)
+
+    def approved_plan(db, month):
+        row = db.execute("SELECT id FROM content_plans WHERE month=? AND state='approved'", (month,)).fetchone()
+        if row is None:
+            raise ValueError('approved content is not ready for this month')
+        return row['id']
+
     async def command(update, context):
         db = connect(database)
         try:
             name = update.effective_message.text.split()[0].split('@')[0]
+            if name == '/start' and update.effective_chat.type == 'private' and update.effective_user:
+                from .members import request_membership
+                user = update.effective_user
+                known = db.execute('SELECT role,enabled FROM users WHERE telegram_id=?', (user.id,)).fetchone()
+                if known and known['enabled'] and known['role'] in ('owner', 'admin'):
+                    await update.effective_message.reply_text('پنل مدیریتی فعال است. برای فهرست دستورات /help را بزنید.')
+                    return
+                status = request_membership(db, user.id, user.username, user.first_name)
+                if status == 'approved':
+                    await update.effective_message.reply_text('عضویت شما فعال است. برای محتوای امروز /today و برای انتخاب روزهای ماه /month را بزنید.')
+                elif status == 'pending':
+                    await update.effective_message.reply_text('درخواست عضویت شما در انتظار بررسی مالک است.')
+                else:
+                    keyboard = InlineKeyboardMarkup([[
+                        InlineKeyboardButton('تأیید', callback_data=f'member:approve:{user.id}'),
+                        InlineKeyboardButton('رد', callback_data=f'member:reject:{user.id}')
+                    ]])
+                    label = ('@' + user.username) if user.username else (user.first_name or str(user.id))
+                    await notify_owners(db, context.bot, f'درخواست عضویت جدید اسپادنا سیم\n{label}\nشناسه: {user.id}', keyboard)
+                    await update.effective_message.reply_text('درخواست عضویت برای مالک ارسال شد.')
+                return
             if name == '/myid' and update.effective_chat.type == 'private' and update.effective_user:
                 await update.effective_message.reply_text(f'شناسهٔ تلگرام شما: {update.effective_user.id}')
                 return  # Reveals only the caller's ID; never grants a role.
@@ -46,6 +80,30 @@ def build_application(token, database):
             elif name == '/catalog':
                 rows = db.execute("SELECT phone_normalized,phone_display,sim_type,sim_status,operator,sale_status,active FROM inventory WHERE active=1 AND sale_status='available' ORDER BY phone_normalized LIMIT 10").fetchall()
                 text = '\n\n'.join(caption(row) for row in rows) or 'موجودی قابل انتشار نداریم.'
+            elif name in ('/today', '/month'):
+                from .members import employee_allowed
+                if not employee_allowed(db, actor):
+                    raise PermissionError('approved employee required')
+                now = datetime.now(ZoneInfo('Asia/Tehran'))
+                plan_id = approved_plan(db, now.strftime('%Y-%m'))
+                if name == '/month':
+                    from .content import _payload
+                    payload, _, _ = _payload(db, actor, plan_id)
+                    days = sorted({item['scheduled_at'][:10] for item in payload['items']})
+                    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(day, callback_data=f'content:day:{day}:{plan_id}')] for day in days])
+                    await update.effective_message.reply_text('روز موردنظر از محتوای آماده ماه را انتخاب کنید:', reply_markup=keyboard)
+                    return
+                await update.effective_message.reply_text('محتوای امروز در حال آماده‌سازی است.')
+                from .delivery import deliver_manual
+                from .transports import TelegramSender
+                try:
+                    result = await deliver_manual(db, actor, plan_id, now.date().isoformat(), TelegramSender(context.bot),
+                                                  Path(database).resolve().parent / 'manual-deliveries')
+                    text = 'شش استوری امروز با کیفیت اصلی ارسال شد.'
+                    await notify_owners(db, context.bot, f"ارسال دستی موفق برای کارمند {actor}، تاریخ {result['day']}")
+                except Exception:
+                    await notify_owners(db, context.bot, f'خطا در ارسال دستی برای کارمند {actor}. وضعیت در گزارش داخلی ثبت شد.')
+                    raise ValueError('manual delivery failed') from None
             elif name == '/alerts':
                 from .content import invalid_exports
                 alerts = invalid_exports(db, actor)
@@ -71,6 +129,30 @@ def build_application(token, database):
                 else:
                     jobs = list_jobs(db, actor)
                     text = '\n'.join(f"{j['day']} / {j['mode']} / {j['state']}\n{j['id']}" for j in jobs[:15]) or 'کاری در صف نیست.'
+            elif name in ('/staff', '/staffadd', '/staffenable', '/staffdisable', '/staffremove', '/staffdaily', '/dailystatus'):
+                from .members import (add_employee, daily_globally_enabled, list_employees,
+                                      set_employee_daily, set_employee_state)
+                require(db, actor, {'owner'})
+                if name == '/staff':
+                    rows = list_employees(db, actor)
+                    text = '\n'.join(f"{r['telegram_id']} / {r['status']} / daily={'on' if r['daily_enabled'] else 'off'}" for r in rows) or 'کارمندی ثبت نشده است.'
+                elif name == '/dailystatus':
+                    text = 'ارسال روزانه عمومی فعال است.' if daily_globally_enabled(db) else 'ارسال روزانه عمومی تا تأیید نهایی مالک غیرفعال است.'
+                elif name == '/staffadd':
+                    if len(context.args) != 1: raise ValueError('usage')
+                    add_employee(db, actor, int(context.args[0])); text = 'کارمند با نقش Viewer فعال شد.'
+                elif name == '/staffenable':
+                    if len(context.args) != 1: raise ValueError('usage')
+                    set_employee_state(db, actor, int(context.args[0]), 'approved'); text = 'کارمند دوباره فعال شد.'
+                elif name == '/staffdisable':
+                    if len(context.args) != 1: raise ValueError('usage')
+                    set_employee_state(db, actor, int(context.args[0]), 'disabled'); text = 'کارمند غیرفعال شد.'
+                elif name == '/staffremove':
+                    if len(context.args) != 1: raise ValueError('usage')
+                    set_employee_state(db, actor, int(context.args[0]), 'removed'); text = 'دسترسی کارمند حذف شد و تاریخچه حفظ شد.'
+                else:
+                    if len(context.args) != 2 or context.args[1] not in ('on','off'): raise ValueError('usage')
+                    set_employee_daily(db, actor, int(context.args[0]), context.args[1] == 'on'); text = 'وضعیت ارسال روزانه کارمند ثبت شد.'
             elif name in ('/packs', '/packapprove', '/packdisable', '/packdefault', '/packuse'):
                 from .packs import list_packs, approve_pack, disable_pack, set_default_pack, select_plan_pack
                 if name == '/packs':
@@ -113,7 +195,7 @@ def build_application(token, database):
                     status = inspect_plan(db, actor, int(context.args[0]))
                     text = f"وضعیت: {status['state']}، تعداد: {status['slots']}، موارد نیازمند بازسازی: {status['stale_slots']}"
             else:
-                text = '/myid\n/catalog\n/alerts\n/queue\n/route USER_ID\n/unroute USER_ID\n/enqueue PLAN_ID [dry_run|telegram]\n/canceljob JOB_ID\n/packs\n/packapprove PACK_ID reviewed\n/packdisable PACK_ID\n/packdefault PACK_ID|builtin\n/packuse PLAN_ID PACK_ID|builtin\n/sale NUMBER available|reserved|sold\n/role USER_ID owner|admin|viewer\n/revoke USER_ID\n/plan YYYY-MM\n/planstatus ID\n/approve ID\n/refresh ID\nاکسل: ارسال xlsx توسط مالک یا ادمین. پک شخصی: ZIP شامل pack.json و عکس‌ها، فقط مالک در چت خصوصی.'
+                text = '/today\n/month\n/staff\n/staffadd USER_ID\n/staffenable USER_ID\n/staffdisable USER_ID\n/staffremove USER_ID\n/staffdaily USER_ID on|off\n/dailystatus\n/myid\n/catalog\n/alerts\n/queue\n/route USER_ID\n/unroute USER_ID\n/enqueue PLAN_ID [dry_run|telegram]\n/canceljob JOB_ID\n/packs\n/packapprove PACK_ID reviewed\n/packdisable PACK_ID\n/packdefault PACK_ID|builtin\n/packuse PLAN_ID PACK_ID|builtin\n/sale NUMBER available|reserved|sold\n/role USER_ID owner|admin|viewer\n/revoke USER_ID\n/plan YYYY-MM\n/planstatus ID\n/approve ID\n/refresh ID\nاکسل: ارسال xlsx توسط مالک یا ادمین. پک شخصی: ZIP شامل pack.json و عکس‌ها، فقط مالک در چت خصوصی.'
             await update.effective_message.reply_text(text)
         except (ValueError, PermissionError):
             await update.effective_message.reply_text('درخواست نامعتبر است یا دسترسی ندارید.')
@@ -199,13 +281,54 @@ def build_application(token, database):
         finally:
             db.close()
 
+    async def membership_callback(update, context):
+        query = update.callback_query
+        await query.answer()
+        db = connect(database)
+        try:
+            actor = authorize(update, db, {'owner'})
+            _, decision, target = query.data.split(':')
+            from .members import review_membership
+            status = review_membership(db, actor, int(target), decision == 'approve')
+            await query.edit_message_text(f'درخواست کاربر {target}: {status}')
+            await context.bot.send_message(chat_id=int(target), text='عضویت شما تأیید شد. /today و /month در دسترس است.' if status == 'approved' else 'درخواست عضویت شما تأیید نشد.')
+        except (ValueError, PermissionError):
+            await query.edit_message_text('این درخواست دیگر قابل بررسی نیست یا دسترسی ندارید.')
+        finally:
+            db.close()
+
+    async def content_callback(update, context):
+        query = update.callback_query
+        await query.answer()
+        db = connect(database)
+        try:
+            actor = authorize(update, db, {'viewer'})
+            _, _, day, plan_id = query.data.split(':')
+            from .delivery import deliver_manual
+            from .transports import TelegramSender
+            await query.edit_message_text(f'محتوای {day} در حال آماده‌سازی است.')
+            try:
+                result = await deliver_manual(db, actor, int(plan_id), day, TelegramSender(context.bot),
+                                              Path(database).resolve().parent / 'manual-deliveries')
+                await query.edit_message_text(f"شش استوری {result['day']} با کیفیت اصلی ارسال شد.")
+                await notify_owners(db, context.bot, f"ارسال دستی موفق برای کارمند {actor}، تاریخ {result['day']}")
+            except Exception:
+                await notify_owners(db, context.bot, f'خطا در ارسال دستی برای کارمند {actor}. وضعیت در گزارش داخلی ثبت شد.')
+                raise ValueError('manual delivery failed') from None
+        except (ValueError, PermissionError):
+            await query.edit_message_text('ارسال انجام نشد؛ عضویت، برنامه یا موجودی معتبر نیست.')
+        finally:
+            db.close()
+
     async def error(update, context):
         # Never log Telegram updates, URLs (contain token), exception text or workbook data.
         logging.getLogger(__name__).error('Telegram operation failed (%s)', type(context.error).__name__)
 
     app = Application.builder().token(token).request(request_client()).get_updates_request(request_client()).build()
-    app.add_handler(CommandHandler(['start', 'help', 'myid', 'role', 'revoke', 'sale', 'catalog', 'plan', 'planstatus', 'approve', 'refresh', 'alerts', 'packs', 'packapprove', 'packdisable', 'packdefault', 'packuse', 'route', 'unroute', 'enqueue', 'queue', 'canceljob'], command))
+    app.add_handler(CommandHandler(['start', 'help', 'today', 'month', 'staff', 'staffadd', 'staffenable', 'staffdisable', 'staffremove', 'staffdaily', 'dailystatus', 'myid', 'role', 'revoke', 'sale', 'catalog', 'plan', 'planstatus', 'approve', 'refresh', 'alerts', 'packs', 'packapprove', 'packdisable', 'packdefault', 'packuse', 'route', 'unroute', 'enqueue', 'queue', 'canceljob'], command))
     app.add_handler(CallbackQueryHandler(inventory_callback, pattern=r'^inv:(preview|apply|cancel):(merge|full):[0-9a-f]{32}$'), group=1)
+    app.add_handler(CallbackQueryHandler(membership_callback, pattern=r'^member:(approve|reject):[1-9][0-9]{0,19}$'), group=1)
+    app.add_handler(CallbackQueryHandler(content_callback, pattern=r'^content:day:[0-9]{4}-[0-9]{2}-[0-9]{2}:[1-9][0-9]*$'), group=1)
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_error_handler(error)
     return app

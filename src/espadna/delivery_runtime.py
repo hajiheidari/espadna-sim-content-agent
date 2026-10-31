@@ -42,6 +42,16 @@ async def run_ticks(db, actor, root, mode='dry_run', allow_network=False, limit=
         try:
             async with Bot(token, request=request_client()) as bot:
                 await process(TelegramSender(bot))
+                if results:
+                    owners = [row[0] for row in db.execute("SELECT telegram_id FROM users WHERE role='owner' AND enabled=1")]
+                    for result in results:
+                        outcome = 'موفق' if result['state'] == 'sent' else f"خطا: {result['state']}"
+                        text = f"گزارش ارسال روزانه اسپادنا سیم\nکارمند: {result['recipient']}\nتاریخ: {result['day']}\nنتیجه: {outcome}"
+                        for owner in owners:
+                            try:
+                                await bot.send_message(chat_id=owner, text=text)
+                            except TelegramError:
+                                logging.getLogger(__name__).error('Owner delivery report failed (TelegramError)')
         except TelegramError:
             raise ValueError('Telegram worker connection failed; inspect queue status before restarting') from None
     return results

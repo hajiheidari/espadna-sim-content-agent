@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 from espadna.content import approve_plan, create_plan, export_status, invalid_exports, refresh_plan
 from espadna.core import bootstrap_owner, connect, revoke_user, set_role, set_sale_status
+from espadna.members import add_employee, set_daily_global
 from espadna.delivery import Bundle, DefiniteRejection, DefiniteRetry, DeliveryUnknown, Media, Receipt, cancel_job, claim_next, enqueue_plan, epoch, job_status, resolve_uncertain, run_once, set_route
 from espadna.raster import render_day
 from espadna.transports import DryRunSender, TelegramSender
@@ -31,7 +32,8 @@ class DeliveryTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.db = connect(':memory:')
         bootstrap_owner(self.db, 1)
-        set_role(self.db, 1, 2, 'viewer')
+        add_employee(self.db, 1, 2)
+        set_daily_global(self.db, 1, True)
         set_role(self.db, 1, 3, 'admin')
         set_role(self.db, 1, 4, 'viewer')
         for n in range(8):

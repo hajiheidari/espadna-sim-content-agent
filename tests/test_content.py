@@ -70,6 +70,16 @@ class ContentTests(unittest.TestCase):
         approve_plan(self.db, 1, plan)
         self.assertTrue(inspect_plan(self.db, 2, plan)['ready'])
 
+    def test_inactive_inventory_is_replaced_before_reapproval(self):
+        plan = create_plan(self.db, 1, '2026-11')
+        approve_plan(self.db, 1, plan)
+        removed = self.phones[0]
+        self.db.execute('UPDATE inventory SET active=0,revision=revision+1 WHERE phone_normalized=?', (removed,))
+        self.assertFalse(inspect_plan(self.db, 2, plan)['ready'])
+        self.assertGreater(refresh_plan(self.db, 1, plan), 0)
+        approve_plan(self.db, 1, plan)
+        self.assertNotIn(removed, json.dumps(approved_payload(self.db, 2, plan)))
+
     def test_refresh_failure_rolls_back(self):
         plan = create_plan(self.db, 1, '2026-11')
         approve_plan(self.db, 1, plan)
@@ -106,7 +116,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             upgraded = connect(path)
-            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 7)
+            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 8)
             self.assertEqual(upgraded.execute('SELECT phone_normalized FROM inventory').fetchone()[0], self.phones[0])
             self.assertEqual(upgraded.execute('SELECT count(*) FROM audit').fetchone()[0], 1)
             upgraded.close()
@@ -180,7 +190,7 @@ class ContentTests(unittest.TestCase):
             self.assertNotIn('enabled', [x[1] for x in old.execute('PRAGMA table_info(users)')])
             old.close()
             upgraded = connect(path)
-            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 7)
+            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 8)
             upgraded.close()
 
     def test_migration_from_v2_preserves_existing_exports(self):
@@ -196,7 +206,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 7)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
             self.assertEqual(db.execute("SELECT state,digest FROM content_exports WHERE id='old'").fetchone()['state'], 'ready')
             self.assertEqual(db.execute("SELECT digest FROM content_exports WHERE id='old'").fetchone()[0], 'test-digest')
             db.close()
@@ -214,7 +224,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 7)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
             self.assertIsNone(db.execute('SELECT design_pack_id FROM content_plans').fetchone()[0])
             self.assertTrue(export_status(db, 1, 'old')['design_current'])
             self.assertIsNone(db.execute('SELECT pack_id FROM design_preferences').fetchone()[0])
@@ -234,7 +244,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 7)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
             self.assertEqual(db.execute('SELECT design_pack_id FROM content_plans').fetchone()[0], 'pack')
             self.assertTrue(export_status(db, 1, 'old')['valid'])
             self.assertEqual(db.execute('SELECT count(*) FROM delivery_jobs').fetchone()[0], 0)

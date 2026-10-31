@@ -31,7 +31,7 @@ def _slots(db, plan_id):
 
 
 def _stale(row):
-    return row['sale_status'] != 'available' or row['inventory_revision'] != row['current_revision']
+    return not row['active'] or row['sale_status'] != 'available' or row['inventory_revision'] != row['current_revision']
 
 
 def create_plan(db, actor, month):
@@ -91,14 +91,14 @@ def refresh_plan(db, actor, plan_id):
         # Retain all available assignments first so replacements cannot duplicate
         # a later position within the same day's six stories.
         for row in rows:
-            if row['sale_status'] == 'available':
+            if row['active'] and row['sale_status'] == 'available':
                 used.setdefault(row['day'], set()).add(row['phone'])
         changed = 0
         for row in rows:
             if not _stale(row):
                 continue
             day_used = used.setdefault(row['day'], set())
-            replacement = row if row['sale_status'] == 'available' else next(x for x in available if x['phone'] not in day_used)
+            replacement = row if row['active'] and row['sale_status'] == 'available' else next(x for x in available if x['phone'] not in day_used)
             revision = row['current_revision'] if replacement is row else replacement['revision']
             db.execute('UPDATE content_slots SET phone=?,inventory_revision=? WHERE id=?', (replacement['phone'], revision, row['id']))
             day_used.add(replacement['phone'])

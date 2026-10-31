@@ -98,8 +98,20 @@ def enqueue_plan(db, actor, plan_id, mode='dry_run', now=None):
     counts = {'created': 0, 'updated': 0, 'unchanged': 0}
     with transaction(db):
         require(db, actor, {'owner', 'admin'})
+        if mode == 'telegram':
+            from .members import daily_globally_enabled
+            if not daily_globally_enabled(db):
+                raise PermissionError('daily employee delivery is awaiting owner activation')
         payload, plan, _ = _payload(db, actor, plan_id)
-        recipients = db.execute('SELECT r.recipient FROM delivery_routes r JOIN users u ON u.telegram_id=r.recipient WHERE r.enabled=1 AND u.enabled=1 ORDER BY r.recipient').fetchall()
+        if mode == 'telegram':
+            recipients = db.execute('''SELECT r.recipient FROM delivery_routes r
+                JOIN users u ON u.telegram_id=r.recipient
+                JOIN membership_requests m ON m.telegram_id=r.recipient
+                JOIN employee_settings s ON s.recipient=r.recipient
+                WHERE r.enabled=1 AND u.enabled=1 AND u.role='viewer' AND m.status='approved' AND s.daily_enabled=1
+                ORDER BY r.recipient''').fetchall()
+        else:
+            recipients = db.execute('SELECT r.recipient FROM delivery_routes r JOIN users u ON u.telegram_id=r.recipient WHERE r.enabled=1 AND u.enabled=1 ORDER BY r.recipient').fetchall()
         if not recipients:
             raise ValueError('owner must configure an active private delivery route first')
         days = sorted({item['scheduled_at'][:10] for item in payload['items']})
@@ -179,12 +191,78 @@ def _validate_job(db, actor, job_id, token, stamp):
         raise ValueError('delivery lease is no longer owned')
     if stamp < row['due_at'] or stamp >= row['expires_at']:
         raise ValueError('delivery is outside its scheduled day')
+    if row['mode'] == 'telegram':
+        from .members import daily_globally_enabled
+        if not daily_globally_enabled(db):
+            raise PermissionError('daily employee delivery is disabled')
     if not _recipient_enabled(db, row['recipient']):
         raise PermissionError('recipient route or role is disabled')
     payload, plan, _ = _payload(db, actor, row['plan_id'])
     if plan['revision'] != row['plan_revision']:
         raise ValueError('plan changed; enqueue the reviewed revision again')
     return row, payload
+
+
+async def deliver_manual(db, actor, plan_id, day, sender, artifact_root, now=None, builder=None, channel=None):
+    """Send one explicitly requested day to an approved employee and record the result."""
+    from .members import employee_allowed
+    if not employee_allowed(db, actor):
+        raise PermissionError('approved employee required')
+    stamp = epoch(now or utc_now())
+    date.fromisoformat(day)
+    with transaction(db):
+        recent = db.execute("SELECT 1 FROM manual_delivery_requests WHERE recipient=? AND day=? AND state IN ('preparing','sending') AND created_at>?",
+                            (actor, day, stamp - 600)).fetchone()
+        if recent:
+            raise ValueError('the same request is already being prepared')
+        payload, plan, _ = _payload(db, actor, plan_id)
+        if not any(item['scheduled_at'][:10] == day for item in payload['items']):
+            raise ValueError('day is not available in the approved plan')
+        request_id = uuid.uuid4().hex
+        db.execute("INSERT INTO manual_delivery_requests(id,recipient,plan_id,day,state,created_at) VALUES(?,?,?,?, 'preparing',?)",
+                   (request_id, actor, plan_id, day, stamp))
+        audit(db, actor, 'manual_delivery_requested', request_id, after={'day': day})
+    root = private_path(artifact_root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f'manual-{request_id}'
+    sending = False
+    try:
+        result = (builder or render_day)(db, actor, plan_id, day, path, channel=channel)
+        if not verify_bundle(db, actor, result['export_id'], path)['usable']:
+            raise ValueError('manual delivery artifact is stale or changed')
+        payload, _, _ = _payload(db, actor, plan_id)
+        items = [item for item in payload['items'] if item['scheduled_at'][:10] == day]
+        if len(items) != 6:
+            raise ValueError('six current stories required')
+        media = []
+        for index, item in enumerate(items, 1):
+            name = f'story-{index:02}.png'
+            data = (path / name).read_bytes()
+            expected = db.execute('SELECT digest FROM artifact_files WHERE export_id=? AND filename=?', (result['export_id'], name)).fetchone()
+            if expected is None or len(data) > 32 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != expected['digest']:
+                raise ValueError('manual delivery image changed')
+            media.append(Media(name, data, item['caption']))
+        with transaction(db):
+            if not employee_allowed(db, actor):
+                raise PermissionError('employee was disabled during preparation')
+            db.execute("UPDATE manual_delivery_requests SET state='sending',export_id=? WHERE id=?", (result['export_id'], request_id))
+        sending = True
+        receipt = await sender.send_bundle(Bundle(actor, request_id, tuple(media)))
+        if (not isinstance(receipt, Receipt) or len(receipt.message_ids) != 6 or len(set(receipt.message_ids)) != 6
+                or any(type(value) is not int or value <= 0 for value in receipt.message_ids)):
+            raise DeliveryUnknown()
+        with transaction(db):
+            db.execute("UPDATE manual_delivery_requests SET state='sent',finished_at=?,receipt_json=? WHERE id=?",
+                       (epoch(utc_now()), json.dumps(list(receipt.message_ids)), request_id))
+            audit(db, actor, 'manual_delivery_result', request_id, after={'state': 'sent'})
+        return {'id': request_id, 'state': 'sent', 'day': day, 'message_ids': receipt.message_ids}
+    except Exception as exc:
+        state = 'uncertain' if sending else ('blocked' if isinstance(exc, (ValueError, PermissionError, DefiniteRejection)) else 'failed')
+        with transaction(db):
+            db.execute('UPDATE manual_delivery_requests SET state=?,finished_at=?,error_code=? WHERE id=?',
+                       (state, epoch(utc_now()), 'send_unknown' if sending else 'prepare_failed', request_id))
+            audit(db, actor, 'manual_delivery_result', request_id, after={'state': state})
+        raise
 
 
 def _problem(db, actor, job_id, token, stamp, state, code, delay=60):
