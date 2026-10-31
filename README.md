@@ -3,11 +3,17 @@
 Telegram-first inventory, content production and public SIM-number catalog for **Espadna Sim**.
 
 ## Status
-Project initialization. No Telegram bot, automation, image rendering, or deployment is live yet.
+Local inventory, private Telegram scaffold, monthly planning, tracked exports and 30 editable reference-based story compositions are implemented. An optional offline Chromium worker renders revision-tracked 1080×1920 PNG bundles. Current designs are accepted for development and can be refined later; nothing is deployed or live. See [setup and security](docs/SETUP.fa.md) and [template design notes](docs/TEMPLATES.fa.md).
+
+User-supplied PNG/JPEG/WebP packs are also supported in private versioned storage: dynamic inventory overlays or reviewed static informational images, per-plan selection, defaults for future plans, replacement and disabling without rewriting the renderer. See [personal image packs](docs/CUSTOM_PACKS.fa.md). Current design refinement does not block development.
+
+A durable private delivery queue records 08:00 Tehran due times, exclusive worker leases, bounded retries and confirmed/uncertain outcomes. Dry-run is the default; real delivery and the optional hidden Windows trial task require explicit owner setup. The package never installs a timer or publishes a channel automatically. See [delivery operations](docs/DELIVERY.fa.md).
+
+Windows setup includes a local masked token-entry dialog and a per-user DPAPI encrypted credential file outside Git. Saving a credential does not connect or send; `bot-check` is an explicit read-only connectivity/identity check. Other hosts can use environment secrets.
 
 ## Product requirements
-- Roles: owner, manager (full operations), viewer (download/read content only).
-- Authorized managers upload Excel inventories (append or explicit full sync), register sold/reserved numbers and manage users. Changes are audited.
+- Roles: owner (user management), admin (inventory and sale operations), viewer (read public-safe content). Unknown users are denied.
+- Excel import is additive only. Missing numbers never delete records. Imports never reset sale/reservation state. Role management is owner-only; changes are audited.
 - Monthly content prepared in advance when possible; six connected Instagram stories daily; scheduled delivery at **08:00 Asia/Tehran**.
 - 30 approved **cinematic dark navy/black and metallic-gold** story compositions, rotating in five six-story groups. The approved contact sheet is a *visual reference*, not an editable asset. Rebuild individual 1080×1920 templates with independent text layers and verified Persian typesetting.
 - No prices in any Instagram image, caption, or public channel post. No geography claims or city backgrounds tied to prefixes.
@@ -17,14 +23,13 @@ Project initialization. No Telegram bot, automation, image rendering, or deploym
 - No paid services or deployment without owner approval.
 
 ## Planned architecture
-Cloudflare Workers + D1, object storage if needed, and a portable rendering worker with an Ubuntu fallback. Keep secrets in deployment environment, never in Git.
+Current implementation: Python 3.11+, SQLite, openpyxl and python-telegram-bot. Cloudflare Workers + D1 remains a future deployment option requiring an adapter/migration and review. Keep secrets in runtime environment, never in Git.
 
 ## Next milestones
-1. Inventory schema, Excel parser, bot authorization and audit log.
-2. Telegram inventory and role management.
-3. Editable story renderer and golden-reference image tests.
-4. Monthly planner, 08:00 Tehran delivery, revisions.
-5. Public channel publishing and inquiry workflow.
+1. Continue delivery workflow work using current designs; refine or replace the 30 compositions with personal image packs whenever desired. They are not pixel-identical crops, and reference numbers/unsupported claims are not copied.
+2. Establish approved image baselines after that review; current browser QA checks all 30 templates, fonts, backgrounds, dimensions, overflow and gold/LTR phone text.
+3. Extend the opted-in local owner-only trial to a continuously available host when desired; current private queue settings and task files stay outside Git. New months still require an approved plan and explicit enqueue.
+4. Implement push warnings for invalid downloaded content, then public channel publishing, updates and inquiry workflow after review and explicit launch approval.
 
 ## Security
 This repository is public. **Never commit bot tokens, private phone lists, customer data, server keys, or inventory Excel files.** Use environment secrets and test fixtures only.

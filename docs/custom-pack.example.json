@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "my-personal-pack",
+  "version": "1",
+  "templates": [
+    {
+      "id": 1,
+      "image": "01.png",
+      "mode": "overlay",
+      "fit": "cover",
+      "layers": [
+        {"field": "title", "x": 100, "y": 180, "width": 880, "height": 320, "font_size": 64},
+        {"field": "phone", "x": 100, "y": 900, "width": 880, "height": 150, "font_size": 80, "color": "#ffe69a"},
+        {"field": "sim_type", "x": 100, "y": 1100, "width": 420, "height": 90, "font_size": 38},
+        {"field": "sim_status", "x": 560, "y": 1100, "width": 420, "height": 90, "font_size": 38},
+        {"field": "operator", "x": 100, "y": 1220, "width": 880, "height": 90, "font_size": 38},
+        {"field": "brand", "x": 100, "y": 1660, "width": 880, "height": 100, "font_size": 42}
+      ]
+    },
+    {"id": 2, "image": "02.png", "mode": "static", "fit": "contain", "layers": []}
+  ]
+}
