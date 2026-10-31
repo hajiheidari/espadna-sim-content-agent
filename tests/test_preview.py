@@ -10,7 +10,9 @@ class PreviewTests(unittest.TestCase):
         try:
             bootstrap_owner(db, 1)
             for i in range(6):
-                db.execute('INSERT INTO inventory(phone,sim_type,sim_status,price_internal) VALUES(?,1,2,?)', (f'090000000{i:02}', '76543210'))
+                phone = f'090000000{i:02}'
+                display = f'{phone[:4]} {phone[4:7]} {phone[7:]}'
+                db.execute('INSERT INTO inventory(phone_normalized,phone_display,sim_type,sim_status,price_internal) VALUES(?,?,1,2,?)', (phone, display, '76543210'))
             plan = create_plan(db, 1, '2026-11')
             approve_plan(db, 1, plan)
             html = preview_day(db, 1, plan, '2026-11-01')

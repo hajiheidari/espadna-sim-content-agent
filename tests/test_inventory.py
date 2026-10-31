@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 import openpyxl
-from espadna.core import bootstrap_owner, connect, set_role, set_sale_status, caption, phone_text
+from espadna.core import bootstrap_owner, connect, set_role, set_sale_status, caption, phone_text, phone_values
 from espadna.importer import import_workbook, parse_workbook
 
 # Synthetic format-only identifiers; no production workbook or customer records.
@@ -46,8 +46,8 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(import_workbook(self.db, 1, self.path)['unchanged'], 1)
         self.book([[PHONE, 2, 3, 999, 'anything', None]])
         self.assertEqual(import_workbook(self.db, 1, self.path)['updated'], 1)
-        row = self.db.execute('SELECT * FROM inventory WHERE phone=?', (PHONE,)).fetchone()
-        self.assertEqual((row['sale_status'], row['sim_status'], row['phone']), ('sold', 3, PHONE))
+        row = self.db.execute('SELECT * FROM inventory WHERE phone_normalized=?', (PHONE,)).fetchone()
+        self.assertEqual((row['sale_status'], row['sim_status'], row['phone_normalized']), ('sold', 3, PHONE))
         self.assertEqual(self.db.execute('SELECT count(*) FROM inventory').fetchone()[0], 2)
 
     def test_duplicate_across_sheets(self):
@@ -126,9 +126,24 @@ class InventoryTests(unittest.TestCase):
 
     def test_phone_digits_and_spacing(self):
         self.assertEqual(phone_text('۰۹۰۰ ۰۰۰ ۰۰۰۰'), PHONE)
+        self.assertEqual(phone_values('091000 90 380'), ('09100090380', '091000 90 380'))
         for value in ['9000000000', '09-000000000', '=09000000000']:
             with self.assertRaises(ValueError):
                 phone_text(value)
+
+    def test_all_614_display_values_round_trip_exactly(self):
+        rows = []
+        expected = {}
+        for index in range(614):
+            normalized = f'091{index:08d}'
+            display = f'{normalized[:6]} {normalized[6:8]} {normalized[8:]}'
+            rows.append([display, 1, 2, None, None, 'همراه اول'])
+            expected[normalized] = display
+        self.book(rows)
+        result = import_workbook(self.db, 1, self.path)
+        self.assertEqual((result['rows'], result['unique'], result['inserted']), (614, 614, 614))
+        stored = dict(self.db.execute('SELECT phone_normalized,phone_display FROM inventory'))
+        self.assertEqual(stored, expected)
 
     def test_database_error_rolls_back_inventory_batch_and_audit(self):
         self.book()

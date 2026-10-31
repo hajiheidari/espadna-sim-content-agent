@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile, BadZipFile
 import openpyxl
-from .core import DIGITS, OPERATORS, audit, phone_text, require
+from .core import DIGITS, OPERATORS, audit, phone_values, require
 
 MAX_BYTES = 10 * 1024 * 1024
 MAX_UNPACKED = 50 * 1024 * 1024
@@ -17,7 +17,8 @@ HEADERS = {'شماره دلخواه': 'phone', 'نوع سیم کارت': 'sim_ty
 
 @dataclass(frozen=True)
 class Record:
-    phone: str
+    phone_normalized: str
+    phone_display: str
     sim_type: int
     sim_status: int
     operator: str | None
@@ -111,12 +112,13 @@ def _parse_bytes(raw):
                     operator = normalize(v['operator']) or None
                     if operator is not None and operator not in OPERATORS:
                         raise ValueError('unverified operator')
-                    record = Record(phone_text(v['phone']), code(v['sim_type'], (1, 2)), code(v['sim_status'], (1, 2, 3)), operator, price(v['price_internal']))
-                    if record.phone in records:
-                        if records[record.phone] != record:
+                    normalized, display = phone_values(v['phone'])
+                    record = Record(normalized, display, code(v['sim_type'], (1, 2)), code(v['sim_status'], (1, 2, 3)), operator, price(v['price_internal']))
+                    if record.phone_normalized in records:
+                        if records[record.phone_normalized] != record:
                             raise ValueError('conflicting duplicate')
                         duplicates += 1
-                    records[record.phone] = record
+                    records[record.phone_normalized] = record
                 except (ValueError, IndexError):
                     # Do not leak phone, price, sheet title or raw values in diagnostics.
                     errors.append(f'sheet {sheet_index}, row {row_index}: invalid or conflicting inventory data')
@@ -143,7 +145,7 @@ def import_workbook(db, actor, path, dry_run=False):
         changes = []
         for record in records:
             new = vars(record)
-            old = db.execute('SELECT phone,sim_type,sim_status,operator,price_internal FROM inventory WHERE phone=?', (record.phone,)).fetchone()
+            old = db.execute('SELECT phone_normalized,phone_display,sim_type,sim_status,operator,price_internal FROM inventory WHERE phone_normalized=?', (record.phone_normalized,)).fetchone()
             before = dict(old) if old else None
             action = 'inserted' if old is None else ('unchanged' if before == new else 'updated')
             counts[action] += 1
@@ -152,8 +154,12 @@ def import_workbook(db, actor, path, dry_run=False):
         if not dry_run:
             batch = db.execute('INSERT INTO import_batches(actor,digest,inserted,updated,unchanged) VALUES(?,?,?,?,?)', (actor, digest, counts['inserted'], counts['updated'], counts['unchanged'])).lastrowid
             for record, before, new in changes:
-                db.execute('INSERT INTO inventory(phone,sim_type,sim_status,operator,price_internal) VALUES(?,?,?,?,?) ON CONFLICT(phone) DO UPDATE SET sim_type=excluded.sim_type,sim_status=excluded.sim_status,operator=excluded.operator,price_internal=excluded.price_internal,revision=inventory.revision+1', tuple(vars(record).values()))
-                audit(db, actor, 'import', record.phone, before, new, batch)
+                db.execute('INSERT INTO inventory(phone_normalized,phone_display,sim_type,sim_status,operator,price_internal) VALUES(?,?,?,?,?,?) ON CONFLICT(phone_normalized) DO UPDATE SET phone_display=excluded.phone_display,sim_type=excluded.sim_type,sim_status=excluded.sim_status,operator=excluded.operator,price_internal=excluded.price_internal,revision=inventory.revision+1', tuple(vars(record).values()))
+                audit(db, actor, 'import', record.phone_normalized, before, new, batch)
+            for record in records:
+                stored = db.execute('SELECT phone_display FROM inventory WHERE phone_normalized=?', (record.phone_normalized,)).fetchone()
+                if stored is None or stored['phone_display'] != record.phone_display:
+                    raise ValueError('phone display verification failed')
         db.execute('ROLLBACK' if dry_run else 'COMMIT')
         return {**stats, **counts, 'dry_run': dry_run}
     except Exception:

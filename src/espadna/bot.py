@@ -42,7 +42,7 @@ def build_application(token, database):
                 set_sale_status(db, actor, *context.args)
                 text = 'وضعیت فروش ثبت شد.'
             elif name == '/catalog':
-                rows = db.execute("SELECT phone,sim_type,sim_status,operator,sale_status FROM inventory WHERE sale_status='available' ORDER BY phone LIMIT 10").fetchall()
+                rows = db.execute("SELECT phone_normalized,phone_display,sim_type,sim_status,operator,sale_status FROM inventory WHERE sale_status='available' ORDER BY phone_normalized LIMIT 10").fetchall()
                 text = '\n\n'.join(caption(row) for row in rows) or 'موجودی قابل انتشار نداریم.'
             elif name == '/alerts':
                 from .content import invalid_exports

@@ -53,3 +53,9 @@ class TemplateTests(unittest.TestCase):
             content = clean_content({'phone': '09000000000', 'sim_type': 'دائمی', 'sim_status': 'صفر', 'operator': value, 'price_internal': 'private'})
             self.assertNotIn('operator', content)
             self.assertNotIn('price_internal', content)
+
+    def test_phone_display_is_exact_ltr_isolated_and_not_regrouped(self):
+        display = '091000 90 380'
+        html = story_markup({'template_id': 1, 'position': 1, 'content': {'phone': display, 'sim_type': 'دائمی', 'sim_status': 'صفر'}})
+        self.assertIn(f'<div class="phone" dir="ltr">{display}</div>', html)
+        self.assertNotIn('0910 009 0380', html)

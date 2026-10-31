@@ -25,8 +25,8 @@ def _plan(db, plan_id):
 
 def _slots(db, plan_id):
     return db.execute('''SELECT s.*, i.sim_type,i.sim_status,i.operator,i.sale_status,
-                         i.revision AS current_revision
-                         FROM content_slots s JOIN inventory i ON i.phone=s.phone
+                         i.phone_normalized,i.phone_display,i.revision AS current_revision
+                         FROM content_slots s JOIN inventory i ON i.phone_normalized=s.phone
                          WHERE s.plan_id=? ORDER BY s.day,s.position''', (plan_id,)).fetchall()
 
 
@@ -41,7 +41,7 @@ def create_plan(db, actor, month):
         require(db, actor, {'owner', 'admin'})
         if db.execute('SELECT 1 FROM content_plans WHERE month=?', (month,)).fetchone():
             raise ValueError('month already planned; refresh its existing plan')
-        available = db.execute("SELECT phone,revision FROM inventory WHERE sale_status='available' ORDER BY phone").fetchall()
+        available = db.execute("SELECT phone_normalized AS phone,revision FROM inventory WHERE sale_status='available' ORDER BY phone_normalized").fetchall()
         if len(available) < 6:
             raise ValueError('at least six available numbers required')
         pack_id, pack_revision = default_pack(db)
@@ -84,7 +84,7 @@ def refresh_plan(db, actor, plan_id):
                 raise ValueError('design pack is unavailable; select another pack')
             pack_revision = pack['revision']
         rows = _slots(db, plan_id)
-        available = db.execute("SELECT phone,revision FROM inventory WHERE sale_status='available' ORDER BY phone").fetchall()
+        available = db.execute("SELECT phone_normalized AS phone,revision FROM inventory WHERE sale_status='available' ORDER BY phone_normalized").fetchall()
         if len(available) < 6:
             raise ValueError('at least six available numbers required')
         used = {}
@@ -207,7 +207,7 @@ def export_status(db, actor, export_id):
         received = db.execute("SELECT 1 FROM delivery_jobs WHERE export_id=? AND recipient=? AND state='sent'", (export_id, actor)).fetchone()
         if received is None:
             raise PermissionError('access denied')
-    changed = db.execute('''SELECT count(*) FROM export_items e JOIN inventory i ON i.phone=e.phone
+    changed = db.execute('''SELECT count(*) FROM export_items e JOIN inventory i ON i.phone_normalized=e.phone
                             WHERE e.export_id=? AND (i.sale_status!='available' OR i.revision!=e.inventory_revision)''', (export_id,)).fetchone()[0]
     current = changed == 0 and export['plan_revision'] == export['current_plan_revision'] and export['plan_state'] == 'approved'
     design_current = True

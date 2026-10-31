@@ -36,7 +36,9 @@ class PackTests(unittest.TestCase):
         set_role(self.db, 1, 2, 'viewer')
         set_role(self.db, 1, 3, 'admin')
         for i in range(6):
-            self.db.execute('INSERT INTO inventory(phone,sim_type,sim_status,price_internal) VALUES(?,1,2,?)', (f'090000000{i:02}', '76543210'))
+            phone = f'090000000{i:02}'
+            display = f'{phone[:4]} {phone[4:7]} {phone[7:]}'
+            self.db.execute('INSERT INTO inventory(phone_normalized,phone_display,sim_type,sim_status,price_internal) VALUES(?,?,1,2,?)', (phone, display, '76543210'))
         self.plan = create_plan(self.db, 1, '2026-11')
         approve_plan(self.db, 1, self.plan)
 

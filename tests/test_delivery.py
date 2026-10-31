@@ -35,7 +35,8 @@ class DeliveryTests(unittest.TestCase):
         set_role(self.db, 1, 3, 'admin')
         set_role(self.db, 1, 4, 'viewer')
         for n in range(8):
-            self.db.execute('INSERT INTO inventory(phone,sim_type,sim_status,price_internal) VALUES(?,1,2,?)', (f'090000000{n:02}', '76543210'))
+            phone = f'090000000{n:02}'
+            self.db.execute('INSERT INTO inventory(phone_normalized,phone_display,sim_type,sim_status,price_internal) VALUES(?,?,1,2,?)', (phone, phone, '76543210'))
         self.plan = create_plan(self.db, 1, '2026-11')
         approve_plan(self.db, 1, self.plan)
         set_route(self.db, 1, 2)

@@ -27,7 +27,8 @@ class BrowserRenderTests(unittest.TestCase):
             try:
                 bootstrap_owner(db, 1)
                 for n in range(6):
-                    db.execute('INSERT INTO inventory(phone,sim_type,sim_status) VALUES(?,1,2)', (f'090000000{n:02}',))
+                    phone = f'090000000{n:02}'
+                    db.execute('INSERT INTO inventory(phone_normalized,phone_display,sim_type,sim_status) VALUES(?,?,1,2)', (phone, phone))
                 plan = create_plan(db, 1, '2026-11')
                 approve_plan(db, 1, plan)
                 set_route(db, 1, 1)
@@ -70,7 +71,8 @@ class BrowserRenderTests(unittest.TestCase):
             try:
                 bootstrap_owner(db, 1)
                 for n in range(6):
-                    db.execute('INSERT INTO inventory(phone,sim_type,sim_status) VALUES(?,1,2)', (f'090000000{n:02}',))
+                    phone = f'090000000{n:02}'
+                    db.execute('INSERT INTO inventory(phone_normalized,phone_display,sim_type,sim_status) VALUES(?,?,1,2)', (phone, phone))
                 plan = create_plan(db, 1, '2026-11')
                 pack = import_pack(db, 1, source, root / 'store')
                 approve_pack(db, 1, pack, True)

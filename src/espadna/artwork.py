@@ -3,7 +3,7 @@ import base64
 from functools import lru_cache
 from html import escape
 from pathlib import Path
-from .core import OPERATORS, STATUSES, TYPES, phone_text
+from .core import OPERATORS, STATUSES, TYPES, phone_values
 from .templates import template_by_id
 
 ASSETS = Path(__file__).with_name('assets')
@@ -48,7 +48,8 @@ def asset_url(filename):
 def clean_content(content):
     if content['sim_type'] not in TYPES.values() or content['sim_status'] not in STATUSES.values():
         raise ValueError('invalid public content labels')
-    result = {'phone': phone_text(content['phone']), 'sim_type': content['sim_type'], 'sim_status': content['sim_status']}
+    _, display = phone_values(content['phone'])
+    result = {'phone': display, 'sim_type': content['sim_type'], 'sim_status': content['sim_status']}
     operator = content.get('operator')
     if isinstance(operator, str) and operator in OPERATORS:
         result['operator'] = operator
@@ -57,9 +58,8 @@ def clean_content(content):
 
 def number_card(content, label=None):
     phone = content['phone']
-    digits = f'{phone[:4]} {phone[4:7]} {phone[7:]}'
     badge = f'<span class="choice">{escape(label)}</span>' if label else ''
-    return f'<div class="number-card">{badge}<div class="phone">{digits}</div></div>'
+    return f'<div class="number-card">{badge}<div class="phone" dir="ltr">{escape(phone)}</div></div>'
 
 
 def _points(points, icons=('diamond', 'heart', 'user', 'chart'), steps=False):
@@ -161,7 +161,7 @@ def custom_document(items, pack, title, review):
             backgrounds[name] = 'data:' + mime + ';base64,' + base64.b64encode(images[name]).decode('ascii')
         values = {**content, 'title': '\n'.join(source.title), 'cta': source.cta, 'brand': 'اسپادنا سیم'}
         phone = content['phone']
-        values['phone'] = f'{phone[:4]} {phone[4:7]} {phone[7:]}'
+        values['phone'] = phone
         layers = []
         for layer in template['layers']:
             field = layer['field']
@@ -172,14 +172,15 @@ def custom_document(items, pack, title, review):
             style = ';'.join(f'{key}:{layer[key]}px' for key in ('width', 'height', 'font_size')).replace('font_size', 'font-size')
             style += f";left:{layer['x']}px;top:{layer['y']}px;color:{layer['color']};text-align:{layer['align']}"
             text = escape(value).replace('\n', '<br>')
-            layers.append(f'<div class="pack-layer{phone_class}" data-field="{field}" style="{style}">{text}</div>')
+            direction = ' dir="ltr"' if field == 'phone' else ''
+            layers.append(f'<div class="pack-layer{phone_class}" data-field="{field}"{direction} style="{style}">{text}</div>')
         cls = 'pack-bg-' + str(template['id'])
         cards.append(f'<section class="tile"><article class="story layout-custom {cls}" data-design-kind="custom" data-template="{source.id}" data-pack-template="{template["id"]}"><div class="review-index">{source.id}</div>{"".join(layers)}</article></section>')
     grouped = {}
     for template in selected.values():
         grouped.setdefault((template['image'], template['fit']), []).append(template['id'])
     image_styles = ''.join(','.join(f'.pack-bg-{index}' for index in ids) + f"{{background-image:url('{backgrounds[name]}');background-size:{fit};background-repeat:no-repeat;background-color:#070a0f}}" for (name, fit), ids in grouped.items())
-    layer_styles = '.pack-layer{position:absolute;overflow:hidden;direction:rtl;line-height:1.45;font-weight:700;white-space:normal}.pack-layer.phone{direction:ltr;white-space:nowrap;line-height:1.3}'
+    layer_styles = '.pack-layer{position:absolute;overflow:hidden;direction:rtl;line-height:1.45;font-weight:700;white-space:normal}.pack-layer.phone{direction:ltr;unicode-bidi:isolate;white-space:pre;line-height:1.3}'
     header = f'<header><h1>{escape(title)}</h1><p>پک شخصی: {escape(row["name"])} · نسخهٔ {escape(row["version"])} · تصاویر خصوصی و متن‌های موجودی مستقل</p></header>' if review else ''
     csp = "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'"
     return '<!doctype html><html lang="fa"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="' + csp + '"><title>' + escape(title) + '</title><style>' + stylesheet([]) + image_styles + layer_styles + '</style></head><body' + (' class="single"' if not review else '') + '>' + header + '<main>' + ''.join(cards) + '</main></body></html>'

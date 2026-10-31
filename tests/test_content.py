@@ -15,7 +15,7 @@ class ContentTests(unittest.TestCase):
         set_role(self.db, 1, 3, 'admin')
         self.phones = [f'090000000{i:02}' for i in range(8)]
         for phone in self.phones:
-            self.db.execute('INSERT INTO inventory(phone,sim_type,sim_status,operator,price_internal) VALUES(?,1,2,NULL,?)', (phone, '87654321.987654'))
+            self.db.execute('INSERT INTO inventory(phone_normalized,phone_display,sim_type,sim_status,operator,price_internal) VALUES(?,?,1,2,NULL,?)', (phone, phone, '87654321.987654'))
 
     def tearDown(self):
         self.db.close()
@@ -106,8 +106,8 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             upgraded = connect(path)
-            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 5)
-            self.assertEqual(upgraded.execute('SELECT phone FROM inventory').fetchone()[0], self.phones[0])
+            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 6)
+            self.assertEqual(upgraded.execute('SELECT phone_normalized FROM inventory').fetchone()[0], self.phones[0])
             self.assertEqual(upgraded.execute('SELECT count(*) FROM audit').fetchone()[0], 1)
             upgraded.close()
             reopened = connect(path)
@@ -180,7 +180,7 @@ class ContentTests(unittest.TestCase):
             self.assertNotIn('enabled', [x[1] for x in old.execute('PRAGMA table_info(users)')])
             old.close()
             upgraded = connect(path)
-            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 5)
+            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 6)
             upgraded.close()
 
     def test_migration_from_v2_preserves_existing_exports(self):
@@ -196,7 +196,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
             self.assertEqual(db.execute("SELECT state,digest FROM content_exports WHERE id='old'").fetchone()['state'], 'ready')
             self.assertEqual(db.execute("SELECT digest FROM content_exports WHERE id='old'").fetchone()[0], 'test-digest')
             db.close()
@@ -214,7 +214,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
             self.assertIsNone(db.execute('SELECT design_pack_id FROM content_plans').fetchone()[0])
             self.assertTrue(export_status(db, 1, 'old')['design_current'])
             self.assertIsNone(db.execute('SELECT pack_id FROM design_preferences').fetchone()[0])
@@ -234,7 +234,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 5)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
             self.assertEqual(db.execute('SELECT design_pack_id FROM content_plans').fetchone()[0], 'pack')
             self.assertTrue(export_status(db, 1, 'old')['valid'])
             self.assertEqual(db.execute('SELECT count(*) FROM delivery_jobs').fetchone()[0], 0)

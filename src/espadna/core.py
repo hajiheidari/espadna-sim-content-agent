@@ -10,12 +10,19 @@ DIGITS = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '012345678901
 
 
 def phone_text(value):
+    return phone_values(value)[0]
+
+
+def phone_values(value):
+    """Return the canonical digits and the exact safe display string."""
     if not isinstance(value, str):
         raise ValueError('phone must be text; numeric cells are ambiguous')
-    value = re.sub(r'\s+', '', value.translate(DIGITS))
-    if not re.fullmatch(r'09[0-9]{9}', value):
+    if len(value) > 64 or not value or any(not (char.isspace() or char.translate(DIGITS).isdigit()) for char in value):
+        raise ValueError('invalid phone display format')
+    normalized = re.sub(r'\s+', '', value.translate(DIGITS))
+    if not re.fullmatch(r'09[0-9]{9}', normalized):
         raise ValueError('invalid phone format')
-    return value
+    return normalized, value
 
 
 def connect(path):
@@ -24,13 +31,13 @@ def connect(path):
     db.execute('PRAGMA foreign_keys=ON')
     version = db.execute('PRAGMA user_version').fetchone()[0]
     try:
-        if version not in (0, 1, 2, 3, 4, 5):
+        if version not in (0, 1, 2, 3, 4, 5, 6):
             raise ValueError('unsupported schema version')
-        if version < 5:
+        if version < 6:
             db.execute('BEGIN IMMEDIATE')
             # Another process may have migrated while this connection waited.
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5):
+            if version not in (0, 1, 2, 3, 4, 5, 6):
                 raise ValueError('unsupported schema version')
             if version == 0:
                 _run_sql(db, 'schema.sql')
@@ -46,6 +53,9 @@ def connect(path):
                 version = 4
             if version == 4:
                 _run_sql(db, 'migration_005.sql')
+                version = 5
+            if version == 5:
+                _run_sql(db, 'migration_006.sql')
             db.execute('COMMIT')
     except Exception:
         db.close()
@@ -133,11 +143,11 @@ def set_sale_status(db, actor, phone, status):
     db.execute('BEGIN IMMEDIATE')
     try:
         require(db, actor, {'owner', 'admin'})
-        old = db.execute('SELECT sale_status FROM inventory WHERE phone=?', (phone,)).fetchone()
+        old = db.execute('SELECT sale_status FROM inventory WHERE phone_normalized=?', (phone,)).fetchone()
         if old is None:
             raise ValueError('unknown inventory item')
         if old['sale_status'] != status:
-            db.execute('UPDATE inventory SET sale_status=?, revision=revision+1 WHERE phone=?', (status, phone))
+            db.execute('UPDATE inventory SET sale_status=?, revision=revision+1 WHERE phone_normalized=?', (status, phone))
             audit(db, actor, 'sale_status', phone, dict(old), {'sale_status': status})
         db.execute('COMMIT')
     except Exception:
@@ -149,7 +159,10 @@ def public_item(row):
     """Sole DTO for images, captions and channel content. Never serialize DB rows."""
     if row['sale_status'] != 'available':
         raise ValueError('item is unavailable for public content')
-    result = {'phone': phone_text(row['phone']), 'sim_type': TYPES[row['sim_type']], 'sim_status': STATUSES[row['sim_status']]}
+    normalized, display = phone_values(row['phone_display'])
+    if normalized != row['phone_normalized']:
+        raise ValueError('stored phone display does not match canonical digits')
+    result = {'phone': display, 'sim_type': TYPES[row['sim_type']], 'sim_status': STATUSES[row['sim_status']]}
     if row['operator'] in OPERATORS:
         result['operator'] = row['operator']
     return result
