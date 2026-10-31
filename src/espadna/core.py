@@ -31,13 +31,13 @@ def connect(path):
     db.execute('PRAGMA foreign_keys=ON')
     version = db.execute('PRAGMA user_version').fetchone()[0]
     try:
-        if version not in (0, 1, 2, 3, 4, 5, 6):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7):
             raise ValueError('unsupported schema version')
-        if version < 6:
+        if version < 7:
             db.execute('BEGIN IMMEDIATE')
             # Another process may have migrated while this connection waited.
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5, 6):
+            if version not in (0, 1, 2, 3, 4, 5, 6, 7):
                 raise ValueError('unsupported schema version')
             if version == 0:
                 _run_sql(db, 'schema.sql')
@@ -56,6 +56,9 @@ def connect(path):
                 version = 5
             if version == 5:
                 _run_sql(db, 'migration_006.sql')
+                version = 6
+            if version == 6:
+                _run_sql(db, 'migration_007.sql')
             db.execute('COMMIT')
     except Exception:
         db.close()
@@ -157,7 +160,7 @@ def set_sale_status(db, actor, phone, status):
 
 def public_item(row):
     """Sole DTO for images, captions and channel content. Never serialize DB rows."""
-    if row['sale_status'] != 'available':
+    if row['sale_status'] != 'available' or ('active' in row.keys() and not row['active']):
         raise ValueError('item is unavailable for public content')
     normalized, display = phone_values(row['phone_display'])
     if normalized != row['phone_normalized']:

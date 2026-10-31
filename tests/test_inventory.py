@@ -4,7 +4,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 import openpyxl
 from espadna.core import bootstrap_owner, connect, set_role, set_sale_status, caption, phone_text, phone_values
-from espadna.importer import import_workbook, parse_workbook
+from espadna.importer import (apply_saved_sync, import_workbook, parse_workbook,
+                              prepare_saved_sync, save_sync_upload)
 
 # Synthetic format-only identifiers; no production workbook or customer records.
 PHONE = '09000000000'
@@ -60,6 +61,99 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             import_workbook(self.db, 1, self.path)
         self.assertEqual(self.db.execute('SELECT sim_type FROM inventory').fetchone()[0], 1)
+
+    def test_full_sync_preview_apply_backup_and_sale_status_guards(self):
+        db_path = Path(self.tmp.name) / 'full.db'
+        db = connect(db_path)
+        bootstrap_owner(db, 1)
+        set_role(db, 1, 2, 'admin')
+        try:
+            third = '09000000002'
+            new = '09000000003'
+            self.book([[PHONE, 1, 2, 10, None, 'همراه اول'],
+                       [OTHER, 1, 2, 20, None, 'همراه اول'],
+                       [third, 2, 1, 30, None, 'ایرانسل']])
+            import_workbook(db, 1, self.path)
+            set_sale_status(db, 1, PHONE, 'sold')
+            set_sale_status(db, 1, OTHER, 'reserved')
+            self.book([['0900 000 0000', 2, 3, 11, None, 'همراه اول'],
+                       [OTHER, 1, 2, 20, None, 'همراه اول'],
+                       [new, 2, 1, 40, None, 'رایتل']])
+            sync_id = save_sync_upload(db, 1, self.path)
+            report = prepare_saved_sync(db, 1, sync_id, 'full')
+            self.assertEqual({k: report[k] for k in ('inserted','updated','unchanged','removed','duplicates')},
+                             {'inserted': 1, 'updated': 1, 'unchanged': 1, 'removed': 1, 'duplicates': 0})
+            with self.assertRaises(PermissionError):
+                prepare_saved_sync(db, 2, sync_id, 'full')
+            result = apply_saved_sync(db, 1, sync_id, Path(self.tmp.name) / 'backups')
+            self.assertTrue(Path(result['backup']).is_file())
+            rows = {r['phone_normalized']: r for r in db.execute('SELECT * FROM inventory')}
+            self.assertEqual((rows[PHONE]['sale_status'], rows[PHONE]['phone_display'], rows[PHONE]['active']),
+                             ('sold', '0900 000 0000', 1))
+            self.assertEqual((rows[OTHER]['sale_status'], rows[OTHER]['active']), ('reserved', 1))
+            self.assertEqual(rows[third]['active'], 0)
+            self.assertEqual((rows[new]['sale_status'], rows[new]['active']), ('available', 1))
+            batch = db.execute('SELECT mode,removed FROM import_batches ORDER BY id DESC LIMIT 1').fetchone()
+            self.assertEqual(tuple(batch), ('full', 1))
+        finally:
+            db.close()
+
+    def test_full_sync_is_atomic_and_stale_preview_is_rejected(self):
+        db_path = Path(self.tmp.name) / 'atomic.db'
+        db = connect(db_path)
+        bootstrap_owner(db, 1)
+        try:
+            self.book([[PHONE, 1, 2, 10, None, 'همراه اول'], [OTHER, 1, 2, 20, None, 'همراه اول']])
+            import_workbook(db, 1, self.path)
+            self.book([[PHONE, 1, 2, 10, None, 'همراه اول']])
+            sync_id = save_sync_upload(db, 1, self.path)
+            prepare_saved_sync(db, 1, sync_id, 'full')
+            with patch('espadna.importer.audit', side_effect=RuntimeError('simulated sync failure')):
+                with self.assertRaises(RuntimeError):
+                    apply_saved_sync(db, 1, sync_id, Path(self.tmp.name) / 'backups')
+            self.assertEqual(dict(db.execute('SELECT phone_normalized,active FROM inventory')), {PHONE: 1, OTHER: 1})
+            self.assertEqual(db.execute("SELECT count(*) FROM import_batches WHERE mode='full'").fetchone()[0], 0)
+            db.execute("UPDATE inventory SET operator='ایرانسل' WHERE phone_normalized=?", (PHONE,))
+            with self.assertRaisesRegex(ValueError, 'changed after preview'):
+                apply_saved_sync(db, 1, sync_id, Path(self.tmp.name) / 'backups')
+        finally:
+            db.close()
+
+    def test_sync_diagnostics_include_sheet_and_row_and_duplicate_preview(self):
+        row = [PHONE, 1, 2, 10, None, 'همراه اول']
+        self.book([row], [row])
+        sync_id = save_sync_upload(self.db, 1, self.path)
+        report = prepare_saved_sync(self.db, 1, sync_id, 'full')
+        self.assertEqual(report['duplicates'], 1)
+        self.assertEqual(report['duplicate_rows'], [{'sheet': 'second', 'row': 2}])
+        bad = [OTHER, 1, 2, 10, None, 'invalid operator']
+        self.book([row], [bad])
+        with self.assertRaisesRegex(ValueError, "sheet 'second', row 2"):
+            save_sync_upload(self.db, 1, self.path)
+
+    def test_full_sync_deactivation_invalidates_scheduled_content(self):
+        from espadna.content import approve_plan, create_plan, inspect_plan
+        db_path = Path(self.tmp.name) / 'content-sync.db'
+        db = connect(db_path)
+        bootstrap_owner(db, 1)
+        try:
+            phones = [f'090000000{i:02}' for i in range(6)]
+            rows = [[phone, 1, 2, None, None, 'همراه اول'] for phone in phones]
+            self.book(rows)
+            import_workbook(db, 1, self.path)
+            plan = create_plan(db, 1, '2026-11')
+            approve_plan(db, 1, plan)
+            self.assertTrue(inspect_plan(db, 1, plan)['ready'])
+            self.book(rows[1:])
+            sync_id = save_sync_upload(db, 1, self.path)
+            prepare_saved_sync(db, 1, sync_id, 'full')
+            apply_saved_sync(db, 1, sync_id, Path(self.tmp.name) / 'backups')
+            status = inspect_plan(db, 1, plan)
+            self.assertFalse(status['ready'])
+            self.assertGreater(status['stale_slots'], 0)
+            self.assertEqual(db.execute('SELECT active FROM inventory WHERE phone_normalized=?', (phones[0],)).fetchone()[0], 0)
+        finally:
+            db.close()
 
     def test_validation_atomicity(self):
         for index, value in [(0, 9000000000), (1, True), (1, 3), (2, 4), (3, -1), (3, '=1+1'), (5, 'unverified')]:

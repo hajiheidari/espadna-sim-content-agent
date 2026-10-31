@@ -4,11 +4,13 @@ import os
 from pathlib import Path
 import tempfile
 from .core import connect, require, set_role, revoke_user, set_sale_status, caption
-from .importer import MAX_BYTES, import_workbook
+from .importer import (MAX_BYTES, apply_saved_sync, cancel_saved_sync,
+                       prepare_saved_sync, save_sync_upload)
 
 
 def build_application(token, database):
-    from telegram.ext import Application, CommandHandler, MessageHandler, filters
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
     from .transports import request_client
 
     def authorize(update, db, roles):
@@ -42,7 +44,7 @@ def build_application(token, database):
                 set_sale_status(db, actor, *context.args)
                 text = 'وضعیت فروش ثبت شد.'
             elif name == '/catalog':
-                rows = db.execute("SELECT phone_normalized,phone_display,sim_type,sim_status,operator,sale_status FROM inventory WHERE sale_status='available' ORDER BY phone_normalized LIMIT 10").fetchall()
+                rows = db.execute("SELECT phone_normalized,phone_display,sim_type,sim_status,operator,sale_status,active FROM inventory WHERE active=1 AND sale_status='available' ORDER BY phone_normalized LIMIT 10").fetchall()
                 text = '\n\n'.join(caption(row) for row in rows) or 'موجودی قابل انتشار نداریم.'
             elif name == '/alerts':
                 from .content import invalid_exports
@@ -144,11 +146,56 @@ def build_application(token, database):
                     if state == 'draft':
                         text += '\nپیش از استفاده تصاویر را از نظر قیمت و شمارهٔ ثابت بررسی کنید.'
                 else:
-                    result = import_workbook(db, actor, path)
-                    text = f"ورود انجام شد: جدید {result['inserted']}، تغییر {result['updated']}، بدون تغییر {result['unchanged']}"
+                    preview_id = save_sync_upload(db, actor, path)
+                    keyboard = InlineKeyboardMarkup([[
+                        InlineKeyboardButton('افزودن و به‌روزرسانی', callback_data=f'inv:preview:merge:{preview_id}'),
+                        InlineKeyboardButton('همگام‌سازی کامل موجودی', callback_data=f'inv:preview:full:{preview_id}')
+                    ]])
+                    await update.effective_message.reply_text('فایل بررسی شد. روش اعمال را انتخاب کنید؛ هنوز هیچ تغییری در موجودی انجام نشده است.', reply_markup=keyboard)
+                    return
             await update.effective_message.reply_text(text)
-        except (ValueError, PermissionError):
+        except ValueError as exc:
+            await update.effective_message.reply_text(f'فایل پذیرفته نشد؛ داده‌ای تغییر نکرد.\n{str(exc)[:3500]}')
+        except PermissionError:
             await update.effective_message.reply_text('فایل پذیرفته نشد یا دسترسی ندارید؛ داده‌ای تغییر نکرد.')
+        finally:
+            db.close()
+
+    def report_text(report):
+        text = (f"پیش‌نمایش موجودی\nجدید: {report['inserted']}\nتغییرکرده: {report['updated']}\n"
+                f"بدون تغییر: {report['unchanged']}\nخارج‌شونده: {report['removed']}\n"
+                f"تکراری: {report['duplicates']}\nشیت‌ها: {report['sheets']}، ردیف‌های پردازش‌شده: {report['rows']}")
+        if report['duplicate_rows']:
+            locations = '، '.join(f"{item['sheet']} ردیف {item['row']}" for item in report['duplicate_rows'][:20])
+            text += '\nردیف‌های تکراری: ' + locations
+        return text
+
+    async def inventory_callback(update, context):
+        query = update.callback_query
+        await query.answer()
+        db = connect(database)
+        try:
+            actor = authorize(update, db, {'owner', 'admin'})
+            parts = query.data.split(':')
+            if len(parts) != 4 or parts[0] != 'inv' or parts[1] not in ('preview', 'apply', 'cancel'):
+                raise ValueError('invalid inventory action')
+            action, mode, preview_id = parts[1], parts[2], parts[3]
+            if action == 'preview':
+                report = prepare_saved_sync(db, actor, preview_id, mode)
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton('تأیید و اعمال', callback_data=f'inv:apply:{mode}:{preview_id}'),
+                    InlineKeyboardButton('لغو', callback_data=f'inv:cancel:{mode}:{preview_id}')
+                ]])
+                await query.edit_message_text(report_text(report) + '\n\nبرای اعمال این تغییرات تأیید کنید.', reply_markup=keyboard)
+            elif action == 'apply':
+                backup_dir = os.environ.get('ESPADNA_BACKUP_DIR', str(Path(database).resolve().parent / 'backups'))
+                result = apply_saved_sync(db, actor, preview_id, backup_dir)
+                await query.edit_message_text(report_text(result) + '\n\nهمگام‌سازی با موفقیت و به‌صورت اتمیک اعمال شد.')
+            else:
+                cancel_saved_sync(db, actor, preview_id)
+                await query.edit_message_text('عملیات لغو شد و هیچ تغییری در موجودی انجام نشد.')
+        except (ValueError, PermissionError) as exc:
+            await query.edit_message_text(f'عملیات انجام نشد و موجودی تغییر نکرد.\n{str(exc)[:3500]}')
         finally:
             db.close()
 
@@ -158,6 +205,7 @@ def build_application(token, database):
 
     app = Application.builder().token(token).request(request_client()).get_updates_request(request_client()).build()
     app.add_handler(CommandHandler(['start', 'help', 'myid', 'role', 'revoke', 'sale', 'catalog', 'plan', 'planstatus', 'approve', 'refresh', 'alerts', 'packs', 'packapprove', 'packdisable', 'packdefault', 'packuse', 'route', 'unroute', 'enqueue', 'queue', 'canceljob'], command))
+    app.add_handler(CallbackQueryHandler(inventory_callback, pattern=r'^inv:(preview|apply|cancel):(merge|full):[0-9a-f]{32}$'), group=1)
     app.add_handler(MessageHandler(filters.Document.ALL, document))
     app.add_error_handler(error)
     return app
