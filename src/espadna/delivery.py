@@ -106,10 +106,12 @@ def enqueue_plan(db, actor, plan_id, mode='dry_run', now=None):
         if mode == 'telegram':
             recipients = db.execute('''SELECT r.recipient FROM delivery_routes r
                 JOIN users u ON u.telegram_id=r.recipient
-                JOIN membership_requests m ON m.telegram_id=r.recipient
-                JOIN employee_settings s ON s.recipient=r.recipient
-                WHERE r.enabled=1 AND u.enabled=1 AND u.role='viewer' AND m.status='approved' AND s.daily_enabled=1
-                ORDER BY r.recipient''').fetchall()
+                LEFT JOIN membership_requests m ON m.telegram_id=r.recipient
+                LEFT JOIN employee_settings s ON s.recipient=r.recipient
+                WHERE r.enabled=1 AND u.enabled=1 AND (
+                    u.role='owner' OR
+                    (u.role='viewer' AND m.status='approved' AND s.daily_enabled=1)
+                ) ORDER BY r.recipient''').fetchall()
         else:
             recipients = db.execute('SELECT r.recipient FROM delivery_routes r JOIN users u ON u.telegram_id=r.recipient WHERE r.enabled=1 AND u.enabled=1 ORDER BY r.recipient').fetchall()
         if not recipients:
