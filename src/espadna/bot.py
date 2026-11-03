@@ -272,7 +272,26 @@ def build_application(token, database):
             elif action == 'apply':
                 backup_dir = os.environ.get('ESPADNA_BACKUP_DIR', str(Path(database).resolve().parent / 'backups'))
                 result = apply_saved_sync(db, actor, preview_id, backup_dir)
-                await query.edit_message_text(report_text(result) + '\n\nهمگام‌سازی با موفقیت و به‌صورت اتمیک اعمال شد.')
+                require(db, actor, {'owner'})
+                from .content import approve_plan, create_plan, refresh_plan
+                from .delivery import enqueue_plan, set_route
+                from .members import set_daily_global
+                month = datetime.now(ZoneInfo('Asia/Tehran')).strftime('%Y-%m')
+                plan = db.execute('SELECT id FROM content_plans WHERE month=?', (month,)).fetchone()
+                if plan is None:
+                    plan_id = create_plan(db, actor, month)
+                else:
+                    plan_id = plan['id']
+                    refresh_plan(db, actor, plan_id)
+                approve_plan(db, actor, plan_id)
+                set_route(db, actor, actor, True)
+                set_daily_global(db, actor, True)
+                queued = enqueue_plan(db, actor, plan_id, 'telegram')
+                await query.edit_message_text(
+                    report_text(result) +
+                    '\n\nهمگام‌سازی اعمال شد و برنامه روزانه ساعت ۸ ایران برای مالک و کارمندان فعال در صف قرار گرفت.' +
+                    f"\nصف جدید: {queued['created']}، به‌روزرسانی: {queued['updated']}"
+                )
             else:
                 cancel_saved_sync(db, actor, preview_id)
                 await query.edit_message_text('عملیات لغو شد و هیچ تغییری در موجودی انجام نشد.')
