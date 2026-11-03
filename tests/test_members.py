@@ -75,6 +75,18 @@ class MembershipTests(unittest.TestCase):
         due = self.db.execute("SELECT due_at FROM delivery_jobs WHERE mode='telegram' ORDER BY day LIMIT 1").fetchone()[0]
         self.assertEqual(datetime.fromtimestamp(due, ZoneInfo('Asia/Tehran')).strftime('%H:%M'), '08:00')
 
+    def test_owner_and_approved_employee_both_receive_daily_jobs(self):
+        from espadna.delivery import set_route
+        plan = self.inventory_and_plan()
+        add_employee(self.db, 1, 200)
+        set_route(self.db, 1, 1, True)
+        set_daily_global(self.db, 1, True)
+        now = datetime(2026, 11, 1, 7, 0, tzinfo=ZoneInfo('Asia/Tehran'))
+        result = enqueue_plan(self.db, 1, plan, 'telegram', now)
+        self.assertEqual(result['created'], 60)
+        recipients = {row[0] for row in self.db.execute("SELECT DISTINCT recipient FROM delivery_jobs WHERE mode='telegram'")}
+        self.assertEqual(recipients, {1, 200})
+
     def test_authorized_test_account_receives_six_original_manual_stories(self):
         plan = self.inventory_and_plan()
         add_employee(self.db, 1, 200)
