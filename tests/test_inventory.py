@@ -51,6 +51,20 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual((row['sale_status'], row['sim_status'], row['phone_normalized']), ('sold', 3, PHONE))
         self.assertEqual(self.db.execute('SELECT count(*) FROM inventory').fetchone()[0], 2)
 
+    def test_workbook_sheet_name_is_preserved_as_source_group(self):
+        wb = openpyxl.Workbook()
+        wb.active.title = 'اصفهان'
+        wb.active.append(HEADER)
+        wb.active.append([PHONE, 1, 2, None, None, 'همراه اول'])
+        ws = wb.create_sheet('تهران')
+        ws.append(HEADER)
+        ws.append([OTHER, 1, 2, None, None, 'همراه اول'])
+        wb.save(self.path)
+        wb.close()
+        import_workbook(self.db, 1, self.path)
+        groups = dict(self.db.execute('SELECT phone_normalized,source_group FROM inventory'))
+        self.assertEqual(groups, {PHONE: 'اصفهان', OTHER: 'تهران'})
+
     def test_duplicate_across_sheets(self):
         row = [PHONE, 1, 2, 12345, 1, 'همراه اول']
         self.book([row], [row])
