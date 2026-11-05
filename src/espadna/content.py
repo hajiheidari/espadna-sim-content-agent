@@ -5,6 +5,7 @@ import re
 from zoneinfo import ZoneInfo
 from .core import audit, caption, public_item, require
 from .packs import default_pack, design_ready, pack_row
+from .templates import shows_inventory, template_by_id
 
 
 def month_days(month):
@@ -25,13 +26,45 @@ def _plan(db, plan_id):
 
 def _slots(db, plan_id):
     return db.execute('''SELECT s.*, i.sim_type,i.sim_status,i.operator,i.sale_status,i.active,
-                         i.phone_normalized,i.phone_display,i.revision AS current_revision
+                         i.phone_normalized,i.phone_display,i.source_group,i.revision AS current_revision
                          FROM content_slots s JOIN inventory i ON i.phone_normalized=s.phone
                          WHERE s.plan_id=? ORDER BY s.day,s.position''', (plan_id,)).fetchall()
 
 
 def _stale(row):
     return not row['active'] or row['sale_status'] != 'available' or row['inventory_revision'] != row['current_revision']
+
+
+def _diverse_six(available, day_index=0, excluded=()):
+    """Pick six unique records, spreading selections across workbook sheets."""
+    excluded = set(excluded)
+    buckets = {}
+    for row in available:
+        if row['phone'] not in excluded:
+            buckets.setdefault(row['source_group'] or 'بدون گروه', []).append(row)
+    if sum(map(len, buckets.values())) < 6:
+        raise ValueError('at least six available numbers required')
+    names = sorted(buckets)
+    names = names[day_index % len(names):] + names[:day_index % len(names)]
+    selected = []
+    queues = {}
+    for name in names:
+        bucket = buckets[name]
+        start = (day_index * 6 // len(names)) % len(bucket)
+        queues[name] = bucket[start:] + bucket[:start]
+    while len(selected) < 6:
+        progressed = False
+        for name in names:
+            if queues[name]:
+                selected.append(queues[name].pop(0))
+                progressed = True
+                if len(selected) == 6:
+                    break
+        if not progressed:
+            break
+    if len(selected) < 6:
+        raise ValueError('at least six available numbers required')
+    return selected
 
 
 def create_plan(db, actor, month):
@@ -41,7 +74,7 @@ def create_plan(db, actor, month):
         require(db, actor, {'owner', 'admin'})
         if db.execute('SELECT 1 FROM content_plans WHERE month=?', (month,)).fetchone():
             raise ValueError('month already planned; refresh its existing plan')
-        available = db.execute("SELECT phone_normalized AS phone,revision FROM inventory WHERE active=1 AND sale_status='available' ORDER BY phone_normalized").fetchall()
+        available = db.execute("SELECT phone_normalized AS phone,revision,source_group FROM inventory WHERE active=1 AND sale_status='available' ORDER BY source_group,phone_normalized").fetchall()
         if len(available) < 6:
             raise ValueError('at least six available numbers required')
         pack_id, pack_revision = default_pack(db)
@@ -49,8 +82,9 @@ def create_plan(db, actor, month):
             raise ValueError('default design pack is unavailable; select another pack')
         plan_id = db.execute('INSERT INTO content_plans(month,created_by,design_pack_id,design_pack_revision) VALUES(?,?,?,?)', (month, actor, pack_id, pack_revision)).lastrowid
         for day_index, day in enumerate(days):
+            daily = _diverse_six(available, day_index)
             for position in range(1, 7):
-                row = available[(day_index * 6 + position - 1) % len(available)]
+                row = daily[position - 1]
                 db.execute('INSERT INTO content_slots(plan_id,day,position,template_id,phone,inventory_revision) VALUES(?,?,?,?,?,?)',
                            (plan_id, day.isoformat(), position, (day_index % 5) * 6 + position, row['phone'], row['revision']))
         audit(db, actor, 'plan_created', str(plan_id), after={'month': month, 'slots': len(days) * 6})
@@ -72,7 +106,7 @@ def inspect_plan(db, actor, plan_id):
 
 
 def refresh_plan(db, actor, plan_id):
-    """Replace unavailable numbers, update revisions, and require reapproval."""
+    """Rebuild daily choices from live inventory and require reapproval."""
     db.execute('BEGIN IMMEDIATE')
     try:
         require(db, actor, {'owner', 'admin'})
@@ -84,27 +118,31 @@ def refresh_plan(db, actor, plan_id):
                 raise ValueError('design pack is unavailable; select another pack')
             pack_revision = pack['revision']
         rows = _slots(db, plan_id)
-        available = db.execute("SELECT phone_normalized AS phone,revision FROM inventory WHERE active=1 AND sale_status='available' ORDER BY phone_normalized").fetchall()
+        available = db.execute("SELECT phone_normalized AS phone,revision,source_group FROM inventory WHERE active=1 AND sale_status='available' ORDER BY source_group,phone_normalized").fetchall()
         if len(available) < 6:
             raise ValueError('at least six available numbers required')
-        used = {}
-        # Retain all available assignments first so replacements cannot duplicate
-        # a later position within the same day's six stories.
+        by_day = {}
         for row in rows:
-            if row['active'] and row['sale_status'] == 'available':
-                used.setdefault(row['day'], set()).add(row['phone'])
+            by_day.setdefault(row['day'], []).append(row)
         changed = 0
-        for row in rows:
-            if not _stale(row):
-                continue
-            day_used = used.setdefault(row['day'], set())
-            replacement = row if row['active'] and row['sale_status'] == 'available' else next(x for x in available if x['phone'] not in day_used)
-            revision = row['current_revision'] if replacement is row else replacement['revision']
-            db.execute('UPDATE content_slots SET phone=?,inventory_revision=? WHERE id=?', (replacement['phone'], revision, row['id']))
-            day_used.add(replacement['phone'])
-            changed += 1
+        for day_index, day in enumerate(sorted(by_day)):
+            current = by_day[day]
+            daily = _diverse_six(available, day_index)
+            replacements = []
+            for row, replacement in zip(current, daily):
+                replacements.append((row['id'], row['plan_id'], row['day'], row['position'], row['template_id'],
+                                     replacement['phone'], replacement['revision']))
+                if row['phone'] != replacement['phone'] or row['inventory_revision'] != replacement['revision']:
+                    changed += 1
+            # Replace the six rows together so phone swaps cannot violate the
+            # per-day uniqueness constraint halfway through the update.
+            if any(row['phone'] != replacement['phone'] or row['inventory_revision'] != replacement['revision']
+                   for row, replacement in zip(current, daily)):
+                db.execute('DELETE FROM content_slots WHERE plan_id=? AND day=?', (plan_id, day))
+                db.executemany('''INSERT INTO content_slots(id,plan_id,day,position,template_id,phone,inventory_revision)
+                                  VALUES(?,?,?,?,?,?,?)''', replacements)
         db.execute("UPDATE content_plans SET state='draft', approved_by=NULL,revision=revision+1,design_pack_revision=? WHERE id=?", (pack_revision, plan_id))
-        audit(db, actor, 'plan_refreshed', str(plan_id), after={'changed_slots': changed})
+        audit(db, actor, 'plan_refreshed', str(plan_id), after={'changed_slots': changed, 'selection': 'source_group_round_robin'})
         db.execute('COMMIT')
         return changed
     except Exception:
@@ -156,7 +194,8 @@ def _payload(db, actor, plan_id):
     for row in rows:
         scheduled = datetime.combine(date.fromisoformat(row['day']), time(8), zone)
         items.append({'slot_id': row['id'], 'template_id': row['template_id'], 'position': row['position'],
-                      'scheduled_at': scheduled.isoformat(), 'content': public_item(row), 'caption': caption(row)})
+                      'scheduled_at': scheduled.isoformat(), 'content': public_item(row),
+                      'caption': caption(row) if shows_inventory(row['template_id']) else '\n'.join((*template_by_id(row['template_id']).title, template_by_id(row['template_id']).cta))})
     return {'plan_id': plan_id, 'month': plan['month'], 'timezone': 'Asia/Tehran', 'items': items}, plan, rows
 
 
