@@ -27,6 +27,7 @@ class Record:
     sim_status: int
     operator: str | None
     price_internal: str | None
+    source_group: str
 
 
 def normalize(value):
@@ -117,14 +118,16 @@ def _parse_bytes(raw):
                     if operator is not None and operator not in OPERATORS:
                         raise ValueError('unverified operator')
                     normalized, display = phone_values(v['phone'])
-                    record = Record(normalized, display, code(v['sim_type'], (1, 2)), code(v['sim_status'], (1, 2, 3)), operator, price(v['price_internal']))
+                    record = Record(normalized, display, code(v['sim_type'], (1, 2)), code(v['sim_status'], (1, 2, 3)), operator, price(v['price_internal']), normalize(sheet.title))
                     if record.phone_normalized in records:
-                        if records[record.phone_normalized] != record:
+                        previous = records[record.phone_normalized]
+                        if tuple(vars(previous).values())[:-1] != tuple(vars(record).values())[:-1]:
                             first_sheet, first_row = locations[record.phone_normalized]
                             raise ValueError(f'conflicting duplicate; first at sheet {first_sheet!r}, row {first_row}')
                         duplicates += 1
                         duplicate_rows.append({'sheet': sheet.title, 'row': row_index})
-                    records[record.phone_normalized] = record
+                    else:
+                        records[record.phone_normalized] = record
                     locations.setdefault(record.phone_normalized, (sheet.title, row_index))
                 except (ValueError, IndexError) as exc:
                     # Do not leak phone, price, sheet title or raw values in diagnostics.
@@ -146,7 +149,7 @@ def _inventory_preview(db, records, stats, mode):
         raise ValueError('invalid inventory sync mode')
     incoming = {record.phone_normalized: record for record in records}
     existing = {row['phone_normalized']: row for row in db.execute(
-        'SELECT phone_normalized,phone_display,sim_type,sim_status,operator,price_internal,sale_status,active FROM inventory')}
+        'SELECT phone_normalized,phone_display,sim_type,sim_status,operator,price_internal,source_group,sale_status,active FROM inventory')}
     counts = {'inserted': 0, 'updated': 0, 'unchanged': 0, 'removed': 0}
     for phone, record in incoming.items():
         old = existing.get(phone)
@@ -205,17 +208,17 @@ def _apply_records(db, actor, records, stats, mode, expected=None, backup_dir=No
         batch = db.execute('INSERT INTO import_batches(actor,digest,inserted,updated,unchanged,mode,removed) VALUES(?,?,?,?,?,?,?)',
                            (actor, digest or '', report['inserted'], report['updated'], report['unchanged'], mode, report['removed'])).lastrowid
         for record in records:
-            old = db.execute('SELECT phone_normalized,phone_display,sim_type,sim_status,operator,price_internal,sale_status,active FROM inventory WHERE phone_normalized=?',
+            old = db.execute('SELECT phone_normalized,phone_display,sim_type,sim_status,operator,price_internal,source_group,sale_status,active FROM inventory WHERE phone_normalized=?',
                              (record.phone_normalized,)).fetchone()
             values = tuple(vars(record).values())
             if old is None:
-                db.execute('INSERT INTO inventory(phone_normalized,phone_display,sim_type,sim_status,operator,price_internal,active) VALUES(?,?,?,?,?,?,1)', values)
+                db.execute('INSERT INTO inventory(phone_normalized,phone_display,sim_type,sim_status,operator,price_internal,source_group,active) VALUES(?,?,?,?,?,?,?,1)', values)
                 audit(db, actor, 'import', record.phone_normalized, None, {**vars(record), 'active': 1}, batch)
             elif not old['active'] or any(old[key] != value for key, value in vars(record).items()):
                 before = dict(old)
-                db.execute('''UPDATE inventory SET phone_display=?,sim_type=?,sim_status=?,operator=?,price_internal=?,active=1,revision=revision+1
+                db.execute('''UPDATE inventory SET phone_display=?,sim_type=?,sim_status=?,operator=?,price_internal=?,source_group=?,active=1,revision=revision+1
                               WHERE phone_normalized=?''', (record.phone_display, record.sim_type, record.sim_status, record.operator,
-                                                           record.price_internal, record.phone_normalized))
+                                                           record.price_internal, record.source_group, record.phone_normalized))
                 after = {**vars(record), 'sale_status': old['sale_status'], 'active': 1}
                 audit(db, actor, 'import', record.phone_normalized, before, after, batch)
         if mode == 'full':
