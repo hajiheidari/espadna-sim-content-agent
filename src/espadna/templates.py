@@ -54,3 +54,11 @@ def template_by_id(template_id):
     if type(template_id) is not int or not 1 <= template_id <= 30:
         raise ValueError('template ID must be between 1 and 30')
     return TEMPLATES[template_id - 1]
+
+
+NUMBER_LAYOUTS = frozenset({'phone', 'compare', 'numbers'})
+
+
+def shows_inventory(template_id):
+    """Return whether the composition is intended to display inventory numbers."""
+    return template_by_id(template_id).layout in NUMBER_LAYOUTS
