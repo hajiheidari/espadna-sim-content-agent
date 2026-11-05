@@ -2,7 +2,7 @@ from html.parser import HTMLParser
 import unittest
 from espadna.artwork import clean_content, story_markup
 from espadna.preview import reference_gallery
-from espadna.templates import TEMPLATES, template_by_id
+from espadna.templates import TEMPLATES, shows_inventory, template_by_id
 
 
 class Nodes(HTMLParser):
