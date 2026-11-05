@@ -4,7 +4,7 @@ from functools import lru_cache
 from html import escape
 from pathlib import Path
 from .core import OPERATORS, STATUSES, TYPES, phone_values
-from .templates import template_by_id
+from .templates import shows_inventory, template_by_id
 
 ASSETS = Path(__file__).with_name('assets')
 DESIGN_VERSION = 'reference-2026-10-25-v1'
@@ -165,6 +165,8 @@ def custom_document(items, pack, title, review):
         layers = []
         for layer in template['layers']:
             field = layer['field']
+            if field == 'phone' and not shows_inventory(source.id):
+                continue
             value = layer['text'] if field == 'text' else values.get(field)
             if not value:
                 continue  # An unknown operator stays absent, never guessed.
