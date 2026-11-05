@@ -31,6 +31,22 @@ class ContentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             create_plan(self.db, 1, '2028-02')
 
+    def test_daily_selection_mixes_workbook_groups_and_non_number_caption_hides_phone(self):
+        groups = ('اصفهان', 'تهران', 'یزد', 'شیراز', 'مشهد', 'تبریز')
+        for phone, group in zip(self.phones, groups + groups[:2]):
+            self.db.execute('UPDATE inventory SET source_group=? WHERE phone_normalized=?', (group, phone))
+        plan = create_plan(self.db, 1, '2026-11')
+        approve_plan(self.db, 1, plan)
+        rows = self.db.execute('''SELECT i.source_group FROM content_slots s JOIN inventory i ON i.phone_normalized=s.phone
+                                  WHERE s.plan_id=? AND s.day='2026-11-01' ORDER BY s.position''', (plan,)).fetchall()
+        self.assertEqual({row['source_group'] for row in rows}, set(groups))
+        payload = approved_payload(self.db, 1, plan)['items']
+        number_item = next(item for item in payload if item['template_id'] == 1)
+        educational = next(item for item in payload if item['template_id'] == 4)
+        self.assertIn(number_item['content']['phone'], number_item['caption'])
+        self.assertNotIn(educational['content']['phone'], educational['caption'])
+        self.assertIn('سه نکتهٔ مهم', educational['caption'])
+
     def test_export_requires_approval_and_never_contains_price(self):
         plan = create_plan(self.db, 3, '2026-11')
         with self.assertRaises(ValueError):
@@ -116,7 +132,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             upgraded = connect(path)
-            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 8)
+            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 9)
             self.assertEqual(upgraded.execute('SELECT phone_normalized FROM inventory').fetchone()[0], self.phones[0])
             self.assertEqual(upgraded.execute('SELECT count(*) FROM audit').fetchone()[0], 1)
             upgraded.close()
@@ -190,7 +206,7 @@ class ContentTests(unittest.TestCase):
             self.assertNotIn('enabled', [x[1] for x in old.execute('PRAGMA table_info(users)')])
             old.close()
             upgraded = connect(path)
-            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 8)
+            self.assertEqual(upgraded.execute('PRAGMA user_version').fetchone()[0], 9)
             upgraded.close()
 
     def test_migration_from_v2_preserves_existing_exports(self):
@@ -206,7 +222,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
             self.assertEqual(db.execute("SELECT state,digest FROM content_exports WHERE id='old'").fetchone()['state'], 'ready')
             self.assertEqual(db.execute("SELECT digest FROM content_exports WHERE id='old'").fetchone()[0], 'test-digest')
             db.close()
@@ -224,7 +240,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
             self.assertIsNone(db.execute('SELECT design_pack_id FROM content_plans').fetchone()[0])
             self.assertTrue(export_status(db, 1, 'old')['design_current'])
             self.assertIsNone(db.execute('SELECT pack_id FROM design_preferences').fetchone()[0])
@@ -244,7 +260,7 @@ class ContentTests(unittest.TestCase):
             old.commit()
             old.close()
             db = connect(path)
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 8)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
             self.assertEqual(db.execute('SELECT design_pack_id FROM content_plans').fetchone()[0], 'pack')
             self.assertTrue(export_status(db, 1, 'old')['valid'])
             self.assertEqual(db.execute('SELECT count(*) FROM delivery_jobs').fetchone()[0], 0)
